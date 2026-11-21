@@ -15,13 +15,14 @@ two ways of building one vector out of the model's three sub-networks:
 Run (from backend/):   python -m ml.check_embeddings
 """
 import argparse
+import json
 import sys
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
 
 import numpy as np
 
-from config import DATA_DIR, ISLR_MODEL_PATH
+from config import DATA_DIR, ISLR_LABELS_PATH, ISLR_MODEL_PATH
 
 RAW_DIR = DATA_DIR / "raw"
 CACHE_DIR = DATA_DIR / "embedding_cache"   # landmark windows, so re-runs are instant
@@ -151,6 +152,60 @@ def few_shot_accuracy(emb: np.ndarray, labels: np.ndarray, shots: int, trials: i
     return float(np.mean(accs))
 
 
+def group_report(emb: np.ndarray, labels: np.ndarray, builtin: set, trials: int, rng):
+    """Same experiment as few_shot_accuracy, but accuracy is reported separately for
+    signs the pretrained model already knows ("built-in") and ones it never saw
+    ("new") - new signs are what the Teach feature is actually for."""
+    signs = sorted(set(labels))
+    is_builtin = np.array([s in builtin for s in labels])
+    print(f"  built-in signs: {[s for s in signs if s in builtin]}")
+    print(f"  new signs     : {[s for s in signs if s not in builtin]}")
+    for shots in (1, 3):
+        correct = {"built-in": [], "new": []}
+        for _ in range(trials):
+            protos, held_out = [], np.ones(len(labels), dtype=bool)
+            for s in signs:
+                chosen = rng.choice(np.flatnonzero(labels == s), size=shots, replace=False)
+                held_out[chosen] = False
+                protos.append(unit(emb[chosen].mean(axis=0)))
+            pred = np.array(signs)[(emb[held_out] @ np.stack(protos).T).argmax(axis=1)]
+            hit = pred == labels[held_out]
+            correct["built-in"].append(hit[is_builtin[held_out]].mean())
+            correct["new"].append(hit[~is_builtin[held_out]].mean())
+        print(f"  {shots}-shot accuracy   built-in {np.mean(correct['built-in']):.1%}   new {np.mean(correct['new']):.1%}")
+
+
+def threshold_report(emb: np.ndarray, labels: np.ndarray, builtin: set, shots: int, trials: int, rng):
+    """Help pick the match threshold. Simulates the app: ONLY the new signs are taught
+    (prototype = average of `shots` clips). Then score
+      - positives: held-out clips of a taught sign vs. their own prototype
+      - negatives: clips of built-in signs vs. their best-matching taught prototype
+    A good threshold accepts most positives and rejects most negatives."""
+    new_signs = sorted(s for s in set(labels) if s not in builtin)
+    pos, neg = [], []
+    for _ in range(trials):
+        protos, held_out = [], np.ones(len(labels), dtype=bool)
+        for s in new_signs:
+            chosen = rng.choice(np.flatnonzero(labels == s), size=shots, replace=False)
+            held_out[chosen] = False
+            protos.append(unit(emb[chosen].mean(axis=0)))
+        protos = np.stack(protos)
+        for i in np.flatnonzero(held_out):
+            sims = emb[i] @ protos.T
+            if labels[i] in new_signs:
+                pos.append(sims[new_signs.index(labels[i])])
+            else:
+                neg.append(sims.max())
+    pos, neg = np.array(pos), np.array(neg)
+    pct = lambda a: " ".join(f"{np.percentile(a, p):.2f}" for p in (5, 25, 50, 75, 95))
+    print(f"  {shots}-shot, taught = {new_signs}")
+    print(f"  score percentiles (5/25/50/75/95)  taught clip vs own prototype: {pct(pos)}")
+    print(f"                                     built-in clip vs best prototype: {pct(neg)}")
+    print(f"  {'threshold':>9}{'taught accepted':>17}{'built-in wrongly accepted':>27}")
+    for t in np.arange(0.10, 0.61, 0.05):
+        print(f"  {t:>9.2f}{(pos >= t).mean():>17.1%}{(neg >= t).mean():>27.1%}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--signs", type=int, default=8, help="how many signs to use")
@@ -191,6 +246,23 @@ def main():
     print("\nsame = mean cosine similarity of clips of the same sign; diff = of different signs;"
           "\ngap = same - diff (bigger is better); n-shot = accuracy classifying held-out clips"
           "\nfrom a prototype averaged over n taught clips per sign.")
+
+    # ---- per-group split, on option (b) (the one we use) ----
+    # signs the pretrained model was trained on = keys of its label map
+    builtin = set(json.loads(ISLR_LABELS_PATH.read_text()))
+    emb_b = options["(b) average of 3 x 384 (384-d)"]
+    print("\n== per-group accuracy, option (b) ==")
+    group_report(emb_b, labels, builtin, args.trials, rng)
+
+    is_new = np.array([s not in builtin for s in labels])
+    same_new, diff_new = similarity_report(emb_b[is_new], labels[is_new])
+    same_all, diff_all = similarity_report(emb_b, labels)
+    print("\n== same-sign similarity by group, option (b) ==")
+    print(f"  new signs only : same {same_new:.3f}   diff {diff_new:.3f}   gap {same_new - diff_new:.3f}")
+    print(f"  all signs      : same {same_all:.3f}   diff {diff_all:.3f}   gap {same_all - diff_all:.3f}")
+
+    print("\n== threshold sweep, option (b) ==")
+    threshold_report(emb_b, labels, builtin, shots=3, trials=args.trials, rng=rng)
 
 
 if __name__ == "__main__":
