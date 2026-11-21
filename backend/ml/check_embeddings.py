@@ -22,11 +22,11 @@ from pathlib import Path
 
 import numpy as np
 
-from config import DATA_DIR, ISLR_LABELS_PATH, ISLR_MODEL_PATH
+from config import DATA_DIR, ISLR_LABELS_PATH
+from ml.fewshot import Embedder, track_to_window, unit
 
 RAW_DIR = DATA_DIR / "raw"
 CACHE_DIR = DATA_DIR / "embedding_cache"   # landmark windows, so re-runs are instant
-WINDOW_FRAMES = 45                         # what the live app feeds the model (30 fps x 1.5 s)
 
 
 # --------------------------------------------------------------------------
@@ -43,7 +43,7 @@ def _init_worker():
 
 
 def clip_to_window(path: Path) -> np.ndarray:
-    """Run MediaPipe on every frame, then pick 45 evenly spaced frames.
+    """Run MediaPipe on every frame, then pick FEWSHOT_WINDOW_FRAMES (45) evenly spaced frames.
 
     A recorded clip is one whole sign, so we stretch it over the fixed 45-frame
     window the model expects - the same shape the live app builds from the webcam.
@@ -66,51 +66,15 @@ def clip_to_window(path: Path) -> np.ndarray:
     if not frames:
         raise RuntimeError(f"no frames read from {path}")
 
-    track = np.stack(frames).astype(np.float32)
-    idx = np.linspace(0, len(track) - 1, WINDOW_FRAMES).round().astype(int)
-    window = track[idx]
+    window = track_to_window(np.stack(frames))
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     np.save(cache, window)
     return window
 
 
 # --------------------------------------------------------------------------
-# 2. window -> embedding (own interpreter; the app's live one is untouched)
+# 2. window -> embedding (Embedder lives in ml/fewshot.py, shared with the app)
 # --------------------------------------------------------------------------
-class Embedder:
-    """Runs the ISLR TFLite model and reads the tensors just before each classifier."""
-
-    def __init__(self):
-        import tensorflow as tf
-
-        # experimental_preserve_all_tensors keeps intermediate results readable
-        # after invoke(); by default TFLite reuses that memory and they are lost.
-        self._it = tf.lite.Interpreter(str(ISLR_MODEL_PATH), experimental_preserve_all_tensors=True)
-        self._run = self._it.get_signature_runner("serving_default")
-        # The model is an ensemble of 3 sub-networks. Each ends with
-        # global_average_pooling1d (average over time) -> 384 numbers -> classifier
-        # (a fully-connected layer with a 250 x 384 weight matrix). So "the
-        # embedding" = the input of each such classifier layer. Found by shape
-        # rather than hard-coding tensor indices.
-        shapes = {d["index"]: list(d["shape"]) for d in self._it.get_tensor_details()}
-        self._pool_ids = [
-            op["inputs"][0] for op in self._it._get_ops_details()
-            if op["op_name"] == "FULLY_CONNECTED"
-            and any(i >= 0 and shapes[i] == [250, 384] for i in op["inputs"])
-        ]
-        if len(self._pool_ids) != 3:
-            raise RuntimeError(f"expected 3 pooled tensors, found {len(self._pool_ids)}")
-
-    def parts(self, window: np.ndarray) -> np.ndarray:
-        """-> (3, 384): one raw embedding per sub-network."""
-        self._run(inputs=window.astype(np.float32))
-        return np.stack([self._it.get_tensor(i)[0] for i in self._pool_ids])
-
-
-def unit(v: np.ndarray) -> np.ndarray:
-    """Scale to length 1, so a dot product between two vectors IS their cosine similarity."""
-    return v / (np.linalg.norm(v, axis=-1, keepdims=True) + 1e-9)
-
 
 def variant_a(parts: np.ndarray) -> np.ndarray:
     """(a) L2-normalise each 384-d part, concatenate to 1152-d, normalise again."""
