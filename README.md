@@ -110,13 +110,13 @@ retraining** the pretrained model, which is never modified.
 **How it works.** Just before its final 250-way layer the model holds an *embedding*: a
 vector describing what was signed. Clips of the same sign give vectors pointing the same way
 (high cosine similarity), different signs do not (`python -m ml.check_embeddings` measures
-this). So to teach a sign we embed 3-5 clips, average them into one *prototype* and store it in
+this). So to teach a sign we embed 3-8 clips, average them into one *prototype* and store it in
 `backend/data/prototypes.json`. To recognise, we embed the live window and pick the closest
 prototype if its similarity is at least `FEWSHOT_THRESHOLD`.
 
 **Teaching** (Teach tab): start the camera, type a name, press *Record clip* (3-2-1
 countdown, then "Sign now!"; each press stores one 45-frame window through the same frame
-pipeline used for live recognition), record 3-5 clips (a bad one can be deleted), then *Save
+pipeline used for live recognition), record 3-8 clips (a bad one can be deleted), then *Save
 sign*. If the built-in model is already fairly sure a clip is one of its own signs you get a
 warning first. Keep the camera on until you save: the clips are held by the live connection.
 The *Live test* panel shows the closest taught sign, its similarity and the threshold.
@@ -136,7 +136,7 @@ or reuse the name of a taught sign (it would be replaced).
 for measuring accuracy later. The folder is git-ignored.
 
 All the numbers are in `backend/config.py`: `FEWSHOT_THRESHOLD` (0.35), `BUILTIN_CONFIDENT`
-(0.5, now only the save-warning bar), `SMOOTH_WINDOWS` / `SMOOTH_MIN_WINS` (5 / 3), `FEWSHOT_MIN_CLIPS` / `MAX_CLIPS` (3 / 5).
+(0.5, now only the save-warning bar), `SMOOTH_WINDOWS` / `SMOOTH_MIN_WINS` (5 / 3), `FEWSHOT_MIN_CLIPS` / `MAX_CLIPS` (3 / 8).
 `GET /api/prototypes`, `DELETE /api/prototypes/{name}` and `POST /api/teach` (clips as JPEG
 frames) expose the store; the Teach tab itself uses the WebSocket commands `mode`, `capture`,
 `delete_clip`, `clear_clips` and `save`.

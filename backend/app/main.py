@@ -124,7 +124,7 @@ def clip_to_window(frames: list[str], clip_no: int) -> np.ndarray:
 
 @app.post("/api/teach")
 def teach(req: TeachRequest):
-    """Teach a new sign from 3-5 recorded clips. Stores one averaged prototype."""
+    """Teach a new sign from 3-8 recorded clips. Stores one averaged prototype."""
     if not ISLR_MODEL_PATH.exists():
         raise HTTPException(503, "Pretrained model missing; few-shot teaching needs it.")
     if not FEWSHOT_MIN_CLIPS <= len(req.clips) <= FEWSHOT_MAX_CLIPS:

@@ -61,7 +61,7 @@ const counter = async (page) => Number((await text(page, '.counter')).match(/rec
 // in view during the window (the fake webcam clip has still moments), exactly as for a real
 // user who just tries again.
 async function recordUntil(page, target, sawCue) {
-  for (let attempt = 0; attempt < 8 && (await counter(page)) < target; attempt++) {
+  for (let attempt = 0; attempt < 30 && (await counter(page)) < target; attempt++) {
     await page.getByRole('button', { name: 'Record clip' }).click()
     // the cue overlay is on screen for the whole countdown + recording, then disappears
     const countdown = await page.locator('.cue.countdown').waitFor({ timeout: 3000 }).then(() => true, () => false)
@@ -104,7 +104,7 @@ async function teachFlow(camera) {
   await recordUntil(page, 3, cue)
   check('3-2-1 countdown is shown', cue.countdown)
   check('"Sign now!" cue is shown', cue.signNow)
-  check('counter reaches 3 / 5', (await counter(page)) === 3, await text(page, '.counter'))
+  check('counter reaches 3 / 8', (await counter(page)) === 3, await text(page, '.counter'))
   check('one chip per clip', (await page.locator('.timeline .chip').count()) === 3)
   check('Save is enabled with 3 clips and a name', await page.getByRole('button', { name: 'Save sign' }).isEnabled())
 
@@ -114,6 +114,10 @@ async function teachFlow(camera) {
   check('Save is disabled again with 2 clips', await page.getByRole('button', { name: 'Save sign' }).isDisabled())
   await recordUntil(page, 3)
   check('re-recorded back to 3 clips', (await counter(page)) === 3)
+
+  await recordUntil(page, 8)
+  check('can record up to 8 clips', (await counter(page)) === 8, await text(page, '.counter'))
+  check('Record is disabled at the 8-clip cap', await page.getByRole('button', { name: 'Record clip' }).isDisabled())
 
   // the clip is a built-in sign, so saving must warn first
   await page.getByRole('button', { name: 'Save sign' }).click()
@@ -133,7 +137,7 @@ async function teachFlow(camera) {
     .then(() => true, () => false)
   check('Save anyway saves the sign', saved && (await text(page, '.banner.ok')).includes('my drink'), await text(page, '.banner.ok').catch(() => ''))
   const evalFiles = existsSync(join(tmp, 'eval', 'my_drink')) ? readdirSync(join(tmp, 'eval', 'my_drink')) : []
-  check('each clip is also saved for later accuracy tests', evalFiles.length === 3 && evalFiles.every((f) => f.endsWith('.npy')), evalFiles.join(', '))
+  check('each clip is also saved for later accuracy tests', evalFiles.length === 8 && evalFiles.every((f) => f.endsWith('.npy')), evalFiles.join(', '))
   check('sign appears in the taught list', (await text(page, '.taught-list')).includes('my drink'))
   check('clip counter resets and the name box clears',
     (await counter(page)) === 0 && (await page.getByLabel('Sign name').inputValue()) === '')

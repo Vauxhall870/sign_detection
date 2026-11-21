@@ -4,11 +4,11 @@ import { useRecognizerSocket } from '../useRecognizerSocket'
 
 const COUNTDOWN_SECONDS = 3
 const MIN_CLIPS = 3
-const MAX_CLIPS = 5
+const MAX_CLIPS = 8
 const RECORD_TIMEOUT_MS = 10000   // give up if the backend never returns a clip
 
 /**
- * Teach a new sign: record 3-5 short clips, give it a name, save.
+ * Teach a new sign: record 3-8 short clips, give it a name, save.
  *
  * "Recording" here is not a video file. After the countdown we ask the backend to keep the
  * next 45-frame window of landmarks from the live frame stream, the very same window the

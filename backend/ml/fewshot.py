@@ -5,7 +5,7 @@ How it works (the viva explanation):
      numbers just before its final 250-way classifier. That vector, the
      "embedding", describes WHAT was signed, so the same sign gives similar
      vectors and different signs give different ones (see ml/check_embeddings.py).
-  2. To teach a new sign we record 3-5 clips, embed each, and AVERAGE them into
+  2. To teach a new sign we record 3-8 clips, embed each, and AVERAGE them into
      one vector: the sign's "prototype". Saving that is all "training" is.
   3. To recognise, we embed the live window and compare it with every taught
      prototype by cosine similarity. The best one wins if it is similar enough.
@@ -133,7 +133,7 @@ def clean_name(name: str) -> str:
 
 
 def add_sign(name: str, windows: list[np.ndarray]) -> dict:
-    """Teach a sign: average the embeddings of 3-5 clips into one prototype and save it.
+    """Teach a sign: average the embeddings of 3-8 clips into one prototype and save it.
     Teaching an existing name replaces it (re-teach)."""
     name = clean_name(name)
     if not FEWSHOT_MIN_CLIPS <= len(windows) <= FEWSHOT_MAX_CLIPS:
