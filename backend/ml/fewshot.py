@@ -160,6 +160,12 @@ def match(embedding: np.ndarray, threshold: float = FEWSHOT_THRESHOLD) -> tuple[
     return names[best], float(sims[best])
 
 
+def has_signs() -> bool:
+    """Cheap check used on every live window: is anything taught at all?"""
+    with _store_lock:
+        return bool(_read())
+
+
 def list_signs() -> list[dict]:
     with _store_lock:
         store = _read()

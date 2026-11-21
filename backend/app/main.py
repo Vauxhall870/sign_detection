@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import time
 
@@ -18,7 +19,7 @@ from config import (
     ISLR_MODEL_PATH,
     SIGN_DIR,
 )
-from ml import fewshot
+from ml import combine, fewshot
 from ml.landmarks import (
     decode_data_url,
     detect,
@@ -28,6 +29,8 @@ from ml.landmarks import (
     make_holistic,
 )
 from ml.predict import FrameBuffer, recognizer
+
+log = logging.getLogger("signlang")
 
 app = FastAPI(title="Sign Language Translator")
 
@@ -154,6 +157,7 @@ async def recognize(ws: WebSocket):
     """
     await ws.accept()
     buffer = FrameBuffer(recognizer.window_seconds, recognizer.sequence_length)
+    smoother = combine.Smoother()   # per connection: its own short memory of recent windows
     holistic = make_holistic()
     extract = extract_raw543 if recognizer.kind == "islr" else extract_keypoints
 
@@ -168,13 +172,40 @@ async def recognize(ws: WebSocket):
         if window is None:
             return {"type": "buffering", "filled": buffer.filled, "needed": buffer.sequence_length, "hands": hands}
         label, confidence, scores = recognizer.predict(window)
+
+        # Taught signs need the ISLR embedding, so they only apply to that model.
+        # With nothing taught we skip all of it: behaviour is exactly as before.
+        taught_on = recognizer.kind == "islr" and fewshot.has_signs()
+        if taught_on:
+            try:
+                taught = fewshot.match(fewshot.get_embedding(window))   # (name, similarity) or None
+            except Exception:
+                # a taught-sign problem must never break built-in recognition
+                log.exception("taught-sign matching failed; using built-in only")
+                taught, taught_on = None, False
+        if not taught_on:
+            smoother.reset()   # don't carry stale votes over if signs are taught later
+            return {
+                "type": "prediction",
+                "label": label,
+                "confidence": confidence,
+                "scores": scores,
+                "hands": hands,
+                "source": "built-in" if confidence >= CONFIDENCE_THRESHOLD else None,
+                "accepted": buffer.accept(label, confidence),
+            }
+
+        # 1) decide this window (built-in vs taught), 2) smooth over the last few windows
+        source, out_label, out_confidence = smoother.update(combine.decide(label, confidence, taught))
         return {
             "type": "prediction",
-            "label": label,
-            "confidence": confidence,
-            "scores": scores,
+            "label": out_label,            # the sign, or "Not sure"
+            "confidence": out_confidence,  # built-in probability, or taught cosine similarity
+            "source": source,              # "built-in", "taught", or None when not sure
+            "scores": scores,              # built-in top scores, for the score bars
+            "taught": {"name": taught[0], "similarity": taught[1]} if taught else None,
             "hands": hands,
-            "accepted": buffer.accept(label, confidence),
+            "accepted": buffer.accept_label(out_label if source else None),
         }
 
     # Holistic runs slower than the client sends, so frames are not queued:
@@ -223,6 +254,7 @@ async def recognize(ws: WebSocket):
             if state["reset"]:
                 state["reset"] = False
                 buffer.reset()
+                smoother.reset()
                 await ws.send_json({"type": "reset"})
             item, state["frame"] = state["frame"], None
             if item is None:

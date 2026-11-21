@@ -171,11 +171,17 @@ class FrameBuffer:
         self._low_since = None
 
     def accept(self, label: str, confidence: float, t: float | None = None) -> bool:
-        """Debounce: only surface a new word above threshold, not the same one
-        repeated on every frame of the same gesture."""
+        """Debounce a built-in prediction: confident = probability above threshold."""
+        return self.accept_label(label if confidence >= CONFIDENCE_THRESHOLD else None, t)
+
+    def accept_label(self, label: str | None, t: float | None = None) -> bool:
+        """Debounce: only surface a new word, not the same one repeated on every
+        frame of the same gesture. `label` is the confident result for this
+        window, or None when nothing was confident (the caller decides what
+        "confident" means: a built-in probability, or a taught-sign similarity)."""
         if t is None:
             t = self.frames[-1][0] if self.frames else time.monotonic()
-        if confidence < CONFIDENCE_THRESHOLD:
+        if label is None:
             # the same word only counts as new once confidence has stayed low
             # for a whole window: until then the window still overlaps the
             # previous gesture and can re-fire on it ("thin thin" for one sign)

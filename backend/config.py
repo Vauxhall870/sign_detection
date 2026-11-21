@@ -30,13 +30,24 @@ SEQUENCES_PER_SIGN = 40   # how many samples to record per word
 CONFIDENCE_THRESHOLD = 0.75
 
 # ---- few-shot "Teach a new sign" (ml/fewshot.py) ----
-FEWSHOT_PROTOTYPES_PATH = DATA_DIR / "prototypes.json"   # taught signs live here
+FEWSHOT_PROTOTYPES_PATH = Path(os.environ.get("FEWSHOT_PROTOTYPES", DATA_DIR / "prototypes.json"))  # taught signs live here
 # Minimum cosine similarity between a live window and a taught sign's prototype
 # for it to count as a match. THE ONE PLACE TO TUNE IT. From ml/check_embeddings.py
 # (3 taught clips): 0.30 accepts 69% of taught-sign clips but lets 16% of built-in
 # sign clips through; 0.35 accepts 61% / 11%; 0.40 accepts 53% / 6%. Raise it if
 # taught signs fire by mistake, lower it if they are missed.
 FEWSHOT_THRESHOLD = 0.35
+# Built-in vs taught (ml/combine.py). The two scores are on different scales (a
+# softmax probability vs a cosine similarity), so they are not compared directly.
+# Rule: a taught sign wins only if the built-in model is NOT confident, i.e. its
+# top probability is below BUILTIN_CONFIDENT. Raise this to let taught signs
+# override the built-in model more often; lower it to trust the built-in model more.
+BUILTIN_CONFIDENT = 0.5
+# Smoothing (only while signs are taught): show a sign only if it won in at least
+# SMOOTH_MIN_WINS of the last SMOOTH_WINDOWS windows. Stops single noisy windows
+# from flashing a wrong word.
+SMOOTH_WINDOWS = 5
+SMOOTH_MIN_WINS = 3
 FEWSHOT_MIN_CLIPS = 3     # clips needed to teach a sign
 FEWSHOT_MAX_CLIPS = 5
 FEWSHOT_WINDOW_FRAMES = round(ISLR_FPS * ISLR_WINDOW_SECONDS)   # 45: what the ISLR model is fed live
