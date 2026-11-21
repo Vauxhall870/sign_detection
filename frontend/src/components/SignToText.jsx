@@ -57,7 +57,7 @@ export default function SignToText({ health }) {
       </div>
       <p className="mode-help">
         {mode === 'asl'
-          ? 'Built-in 250 ASL signs plus any signs you taught.'
+          ? 'The built-in 250 ASL signs only. Taught signs are not used here.'
           : 'Only the signs you taught. Built-in results are ignored.'}
       </p>
       {mode === 'isl' && nothingTaught && (

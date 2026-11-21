@@ -6,7 +6,7 @@
 //
 // Needs Google Chrome, the backend venv, data/raw (ml.fetch_wlasl) and the pretrained model.
 import { spawn, execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -119,7 +119,7 @@ async function teachFlow(camera) {
   await page.getByRole('button', { name: 'Save sign' }).click()
   await page.locator('.banner.warn').waitFor({ timeout: 10000 })
   const warning = await text(page, '.banner.warn')
-  check('clash warning names the built-in sign', /built-in sign .drink/i.test(warning) && /Save anyway\?/.test(warning), warning.replace(/\s+/g, ' '))
+  check('clash warning names the built-in sign', /built-in ASL sign .drink/i.test(warning) && /Save anyway\?/.test(warning), warning.replace(/\s+/g, ' '))
   check('nothing was saved yet', (await (await fetch(`${API}/api/prototypes`)).json()).signs.length === 0)
 
   await page.getByRole('button', { name: 'Cancel' }).click()
@@ -132,6 +132,8 @@ async function teachFlow(camera) {
   const saved = await page.waitForFunction(() => /Saved/.test(document.querySelector('.banner.ok')?.textContent ?? ''), null, { timeout: 10000 })
     .then(() => true, () => false)
   check('Save anyway saves the sign', saved && (await text(page, '.banner.ok')).includes('my drink'), await text(page, '.banner.ok').catch(() => ''))
+  const evalFiles = existsSync(join(tmp, 'eval', 'my_drink')) ? readdirSync(join(tmp, 'eval', 'my_drink')) : []
+  check('each clip is also saved for later accuracy tests', evalFiles.length === 3 && evalFiles.every((f) => f.endsWith('.npy')), evalFiles.join(', '))
   check('sign appears in the taught list', (await text(page, '.taught-list')).includes('my drink'))
   check('clip counter resets and the name box clears',
     (await counter(page)) === 0 && (await page.getByLabel('Sign name').inputValue()) === '')
@@ -164,6 +166,7 @@ async function modes(camera) {
   await page.getByRole('button', { name: 'ASL mode', exact: true }).click()
   const builtin = await page.waitForFunction(() => document.querySelector('.badge.built-in') !== null, null, { timeout: 30000 }).then(() => true, () => false)
   check('ASL: result is labelled "built-in"', builtin, builtin ? await text(page, '.result') : '')
+  check('ASL: taught signs never appear', (await page.locator('.badge.taught').count()) === 0)
   check('ASL: built-in score bars are back', (await page.locator('.score-row').count()) === 4)
   const sentence = await page.waitForFunction(() => /drink/.test(document.querySelector('.sentence p')?.textContent ?? ''), null, { timeout: 30000 }).then(() => true, () => false)
   check('ASL: built-in "drink" goes into the sentence', sentence, await text(page, '.sentence p'))
@@ -190,7 +193,7 @@ const camera = join(tmp, 'camera.y4m')
 try {
   execFileSync(PYTHON, ['-m', 'tests.fake_camera', 'data/raw/drink/17709.mp4', camera, '4'], { cwd: BACKEND })
   start(PYTHON, ['-m', 'uvicorn', 'app.main:app', '--port', '8000'], BACKEND,
-    { TF_CPP_MIN_LOG_LEVEL: '2', FEWSHOT_PROTOTYPES: join(tmp, 'prototypes.json') })
+    { TF_CPP_MIN_LOG_LEVEL: '2', FEWSHOT_PROTOTYPES: join(tmp, 'prototypes.json'), FEWSHOT_EVAL_CLIPS: join(tmp, 'eval') })
   start(process.execPath, [VITE, '--port', '5173', '--strictPort'], FRONTEND)
   await waitFor(`${API}/api/health`)
   await waitFor(APP)

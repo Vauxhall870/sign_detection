@@ -167,7 +167,7 @@ async def recognize(ws: WebSocket):
     extract = extract_raw543 if recognizer.kind == "islr" else extract_keypoints
 
     # Per-connection state beyond the frame buffer:
-    #   mode      "asl" = built-in 250 signs + taught signs, "isl" = taught signs only
+    #   mode      "asl" = built-in 250 signs only, "isl" = taught signs only
     #   clips     windows recorded by the Teach tab, waiting to be saved as one sign
     #   capturing True from a "capture" command until the next full window is taken
     #   commands  non-frame messages from the client, handled in order by the main loop
@@ -221,42 +221,17 @@ async def recognize(ws: WebSocket):
                 "accepted": buffer.accept_label(out_label if source else None),
             }
 
+        # ASL mode: built-in 250 signs ONLY, exactly the original behaviour. Taught signs
+        # are never looked at here, and there is no extra smoothing.
         label, confidence, scores = recognizer.predict(window)
-
-        # Taught signs need the ISLR embedding, so they only apply to that model.
-        # With nothing taught we skip all of it: behaviour is exactly as before.
-        taught_on = recognizer.kind == "islr" and fewshot.has_signs()
-        if taught_on:
-            try:
-                best, passed = taught_info(window)
-                taught = best if passed else None          # (name, similarity) or None
-            except Exception:
-                # a taught-sign problem must never break built-in recognition
-                log.exception("taught-sign matching failed; using built-in only")
-                best, taught, taught_on = None, None, False
-        if not taught_on:
-            smoother.reset()   # don't carry stale votes over if signs are taught later
-            return {
-                "type": "prediction",
-                "label": label,
-                "confidence": confidence,
-                "scores": scores,
-                "hands": hands,
-                "source": "built-in" if confidence >= CONFIDENCE_THRESHOLD else None,
-                "accepted": buffer.accept(label, confidence),
-            }
-
-        # 1) decide this window (built-in vs taught), 2) smooth over the last few windows
-        source, out_label, out_confidence = smoother.update(combine.decide(label, confidence, taught))
         return {
             "type": "prediction",
-            "label": out_label,            # the sign, or "Not sure"
-            "confidence": out_confidence,  # built-in probability, or taught cosine similarity
-            "source": source,              # "built-in", "taught", or None when not sure
-            "scores": scores,              # built-in top scores, for the score bars
-            "taught": taught_json(best, passed),   # best taught match + whether it passed the threshold
+            "label": label,
+            "confidence": confidence,
+            "scores": scores,
             "hands": hands,
-            "accepted": buffer.accept_label(out_label if source else None),
+            "source": "built-in" if confidence >= CONFIDENCE_THRESHOLD else None,
+            "accepted": buffer.accept(label, confidence),
         }
 
     def handle_command(cmd: dict) -> dict | None:
@@ -305,11 +280,21 @@ async def recognize(ws: WebSocket):
                 return {"type": "save_error", "message": str(e)}
             # Clash check: run the built-in model on the clips. If it is already
             # fairly sure a clip is one of its own signs, warn before saving.
+            # Warn (and ask the user to confirm) if the new sign looks like a built-in
+            # ASL sign, looks like a sign already taught, or would replace one by name.
             if not cmd.get("confirm"):
+                name = str(cmd["name"])
+                clashes = []
                 hits = [(lab, conf) for lab, conf, _ in map(recognizer.predict, clips) if conf >= BUILTIN_CONFIDENT]
                 if hits:
                     lab, conf = max(hits, key=lambda h: h[1])
-                    return {"type": "clash", "label": lab, "confidence": conf, "clips": len(hits)}
+                    clashes.append({"kind": "builtin", "label": lab, "confidence": conf})
+                for other, sim in fewshot.similar_taught(clips, name):
+                    clashes.append({"kind": "taught", "label": other, "confidence": sim})
+                if fewshot.is_taught(name):
+                    clashes.append({"kind": "overwrite", "label": fewshot.clean_name(name), "confidence": 1.0})
+                if clashes:
+                    return {"type": "clash", "clashes": clashes}
             info = fewshot.add_sign(str(cmd["name"]), list(clips))
             clips.clear()
             return {"type": "saved", **info}

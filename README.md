@@ -121,14 +121,22 @@ sign*. If the built-in model is already fairly sure a clip is one of its own sig
 warning first. Keep the camera on until you save: the clips are held by the live connection.
 The *Live test* panel shows the closest taught sign, its similarity and the threshold.
 
-**Modes** (Sign → Text): **ASL mode** (default) = built-in 250 signs plus taught signs; a taught
-sign wins only if the built-in model is not confident (`BUILTIN_CONFIDENT`). **ISL mode** =
-taught signs only, built-in results ignored. Each result shows its source (built-in or taught)
-and confidence (a probability for built-in, a cosine similarity for taught). A sign is shown
-only once it wins 3 of the last 5 windows.
+**Modes** (Sign → Text), which never mix: **ASL mode** (default) = the built-in 250 signs only,
+exactly the original app; taught signs are not looked at. **ISL mode** = taught signs only, the
+built-in model is not run. Each result shows its source (built-in or taught) and confidence (a
+probability for built-in, a cosine similarity for taught). In ISL mode a sign is shown only once
+it wins 3 of the last 5 windows.
+
+**Save warnings.** Before saving you are asked to confirm if the clips look like a built-in ASL
+sign (`BUILTIN_CONFIDENT`), look like a sign you already taught (similarity ≥ `FEWSHOT_THRESHOLD`),
+or reuse the name of a taught sign (it would be replaced).
+
+**Eval clips.** Saving also keeps each clip as `backend/data/eval_clips/<sign>/clip_*.npy` (a
+45×543×3 landmark window), at most 8 per sign (oldest dropped first; `FEWSHOT_EVAL_MAX_CLIPS`),
+for measuring accuracy later. The folder is git-ignored.
 
 All the numbers are in `backend/config.py`: `FEWSHOT_THRESHOLD` (0.35), `BUILTIN_CONFIDENT`
-(0.5), `SMOOTH_WINDOWS` / `SMOOTH_MIN_WINS` (5 / 3), `FEWSHOT_MIN_CLIPS` / `MAX_CLIPS` (3 / 5).
+(0.5, now only the save-warning bar), `SMOOTH_WINDOWS` / `SMOOTH_MIN_WINS` (5 / 3), `FEWSHOT_MIN_CLIPS` / `MAX_CLIPS` (3 / 5).
 `GET /api/prototypes`, `DELETE /api/prototypes/{name}` and `POST /api/teach` (clips as JPEG
 frames) expose the store; the Teach tab itself uses the WebSocket commands `mode`, `capture`,
 `delete_clip`, `clear_clips` and `save`.

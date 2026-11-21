@@ -153,7 +153,13 @@ export default function Teach({ health }) {
       </div>
       {clash && (
         <div className="banner warn">
-          This looks like built-in sign “{clash.label}” ({(clash.confidence * 100).toFixed(0)}% sure).
+          {clash.clashes.map((c) => (
+            <div key={c.kind + c.label}>
+              {c.kind === 'builtin' && <>This looks like built-in ASL sign “{c.label}” ({(c.confidence * 100).toFixed(0)}% sure).</>}
+              {c.kind === 'taught' && <>This looks like a sign you already taught, “{c.label}” (similarity {c.confidence.toFixed(2)}).</>}
+              {c.kind === 'overwrite' && <>You already taught a sign called “{c.label}”; saving replaces it.</>}
+            </div>
+          ))}
           Save anyway?
           <span className="inline-actions">
             <button onClick={() => save(true)}>Save anyway</button>

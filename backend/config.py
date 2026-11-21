@@ -50,7 +50,11 @@ SMOOTH_WINDOWS = 5
 SMOOTH_MIN_WINS = 3
 FEWSHOT_MIN_CLIPS = 3     # clips needed to teach a sign
 FEWSHOT_MAX_CLIPS = 5
-FEWSHOT_WINDOW_FRAMES = round(ISLR_FPS * ISLR_WINDOW_SECONDS)   # 45: what the ISLR model is fed live
+# Every clip recorded for a taught sign is also kept here (one .npy landmark window each)
+# so accuracy can be measured later. At most EVAL_MAX_CLIPS per sign; the oldest go first.
+FEWSHOT_EVAL_DIR = Path(os.environ.get("FEWSHOT_EVAL_CLIPS", DATA_DIR / "eval_clips"))
+FEWSHOT_EVAL_MAX_CLIPS = 8
+FEWSHOT_WINDOW_FRAMES =round(ISLR_FPS * ISLR_WINDOW_SECONDS)   # 45: what the ISLR model is fed live
 
 for d in (SEQ_DIR, MODEL_DIR, SIGN_DIR):
     d.mkdir(parents=True, exist_ok=True)

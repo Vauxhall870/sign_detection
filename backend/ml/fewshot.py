@@ -16,10 +16,13 @@ import json
 import os
 import re
 import threading
+import time
 
 import numpy as np
 
 from config import (
+    FEWSHOT_EVAL_DIR,
+    FEWSHOT_EVAL_MAX_CLIPS,
     FEWSHOT_MAX_CLIPS,
     FEWSHOT_MIN_CLIPS,
     FEWSHOT_PROTOTYPES_PATH,
@@ -135,13 +138,48 @@ def add_sign(name: str, windows: list[np.ndarray]) -> dict:
     name = clean_name(name)
     if not FEWSHOT_MIN_CLIPS <= len(windows) <= FEWSHOT_MAX_CLIPS:
         raise ValueError(f"need {FEWSHOT_MIN_CLIPS}-{FEWSHOT_MAX_CLIPS} clips, got {len(windows)}")
-    embeddings = np.stack([get_embedding(w) for w in windows])
-    prototype = unit(embeddings.mean(axis=0))      # the sign's "average direction"
+    prototype = prototype_of(windows)
     with _store_lock:
         store = _read()
         store[name] = {"embedding": prototype.tolist(), "clips": len(windows)}
         _write(store)
+    save_eval_clips(name, windows)
     return {"name": name, "clips": len(windows)}
+
+
+def prototype_of(windows: list[np.ndarray]) -> np.ndarray:
+    """Average the clips' embeddings into one unit vector: the sign's "average direction"."""
+    return unit(np.stack([get_embedding(w) for w in windows]).mean(axis=0))
+
+
+def similar_taught(windows: list[np.ndarray], name: str) -> list[tuple[str, float]]:
+    """Already-taught signs (other than `name`) that the new clips resemble, as
+    (name, cosine similarity), most similar first. "Resemble" = similarity of the new
+    prototype to theirs is at least FEWSHOT_THRESHOLD, the same bar used to recognise."""
+    new = prototype_of(windows)
+    with _store_lock:
+        store = _read()
+    found = [(n, float(np.dot(new, np.array(s["embedding"], dtype=np.float32))))
+             for n, s in store.items() if n != clean_name(name)]
+    return sorted([f for f in found if f[1] >= FEWSHOT_THRESHOLD], key=lambda f: -f[1])
+
+
+def is_taught(name: str) -> bool:
+    with _store_lock:
+        return clean_name(name) in _read()
+
+
+def save_eval_clips(name: str, windows: list[np.ndarray]) -> None:
+    """Keep each recorded clip as backend/data/eval_clips/<sign>/clip_<time>_<n>.npy so
+    accuracy can be tested later. Teaching the same sign again adds to the folder; only
+    the newest FEWSHOT_EVAL_MAX_CLIPS are kept. The folder name is made filesystem-safe."""
+    folder = FEWSHOT_EVAL_DIR / (re.sub(r"[^a-z0-9]+", "_", clean_name(name)).strip("_") or "sign")
+    folder.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    for i, window in enumerate(windows, 1):
+        np.save(folder / f"clip_{stamp}_{i}.npy", window.astype(np.float32))
+    for old in sorted(folder.glob("clip_*.npy"))[:-FEWSHOT_EVAL_MAX_CLIPS]:
+        old.unlink()
 
 
 def best_match(embedding: np.ndarray) -> tuple[str, float] | None:
