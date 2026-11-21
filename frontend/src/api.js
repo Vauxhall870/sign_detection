@@ -9,6 +9,18 @@ export async function getHealth() {
   return res.json()
 }
 
+// Signs taught so far, plus the similarity needed to match them: { signs: [{name, clips}], threshold }
+export async function getPrototypes() {
+  const res = await fetch(`${API_BASE}/api/prototypes`)
+  if (!res.ok) throw new Error('Could not load taught signs')
+  return res.json()
+}
+
+export async function deletePrototype(name) {
+  const res = await fetch(`${API_BASE}/api/prototypes/${encodeURIComponent(name)}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Could not delete sign')
+}
+
 export async function textToSign(text) {
   const res = await fetch(`${API_BASE}/api/text-to-sign`, {
     method: 'POST',

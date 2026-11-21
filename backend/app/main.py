@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app import library
 from config import (
+    BUILTIN_CONFIDENT,
     CONFIDENCE_THRESHOLD,
     FEWSHOT_MAX_CLIPS,
     FEWSHOT_MIN_CLIPS,
@@ -89,6 +90,10 @@ MAX_FRAMES_PER_CLIP = 150    # guards against huge uploads
 MIN_HAND_FRACTION = 0.3      # a clip where hands are rarely seen can't teach a hand sign
 
 
+# non-frame messages the WebSocket understands (besides "reset"); see handle_command
+COMMANDS = {"mode", "capture", "delete_clip", "clear_clips", "save"}
+
+
 class TeachRequest(BaseModel):
     name: str
     # each clip is a list of base64 JPEG frames (data URLs), in time order
@@ -161,6 +166,24 @@ async def recognize(ws: WebSocket):
     holistic = make_holistic()
     extract = extract_raw543 if recognizer.kind == "islr" else extract_keypoints
 
+    # Per-connection state beyond the frame buffer:
+    #   mode      "asl" = built-in 250 signs + taught signs, "isl" = taught signs only
+    #   clips     windows recorded by the Teach tab, waiting to be saved as one sign
+    #   capturing True from a "capture" command until the next full window is taken
+    #   commands  non-frame messages from the client, handled in order by the main loop
+    state = {"frame": None, "reset": False, "closed": False,
+             "mode": "asl", "clips": [], "capturing": False, "commands": []}
+
+    def taught_info(window):
+        """Closest taught sign for this window -> (best, passed). `best` is
+        (name, similarity) whatever the similarity (the Teach tab displays it),
+        `passed` is whether it clears FEWSHOT_THRESHOLD."""
+        best = fewshot.best_match(fewshot.get_embedding(window))
+        return best, best is not None and best[1] >= FEWSHOT_THRESHOLD
+
+    def taught_json(best, passed):
+        return {"name": best[0], "similarity": best[1], "matched": passed} if best else None
+
     def process(data_url: str, t: float) -> dict | None:
         """CPU-bound: runs in a worker thread so the event loop stays free."""
         frame = decode_data_url(data_url)
@@ -171,6 +194,33 @@ async def recognize(ws: WebSocket):
         hands = has_hands(results)
         if window is None:
             return {"type": "buffering", "filled": buffer.filled, "needed": buffer.sequence_length, "hands": hands}
+
+        # Teach tab: keep exactly one window. It comes out of the same FrameBuffer
+        # the live recogniser uses, so a taught clip and a live window are built
+        # identically (same 1.5 s span, same resampling).
+        if state["capturing"]:
+            state["capturing"] = False
+            if fewshot.hand_fraction(window) < MIN_HAND_FRACTION:
+                return {"type": "clip_rejected", "reason": "Hands were not visible. Keep them in view and try again."}
+            state["clips"].append(window.copy())
+            return {"type": "clips", "count": len(state["clips"])}
+
+        # ISL mode: taught signs only. The built-in model is not even run.
+        if state["mode"] == "isl":
+            try:
+                best, passed = taught_info(window) if fewshot.has_signs() else (None, False)
+            except Exception:
+                log.exception("taught-sign matching failed")
+                best, passed = None, False
+            result = ("taught", best[0], best[1]) if passed else (None, combine.NOT_SURE, best[1] if best else 0.0)
+            source, out_label, out_confidence = smoother.update(result)
+            return {
+                "type": "prediction", "mode": "isl",
+                "label": out_label, "confidence": out_confidence, "source": source,
+                "scores": {}, "taught": taught_json(best, passed), "hands": hands,
+                "accepted": buffer.accept_label(out_label if source else None),
+            }
+
         label, confidence, scores = recognizer.predict(window)
 
         # Taught signs need the ISLR embedding, so they only apply to that model.
@@ -178,11 +228,12 @@ async def recognize(ws: WebSocket):
         taught_on = recognizer.kind == "islr" and fewshot.has_signs()
         if taught_on:
             try:
-                taught = fewshot.match(fewshot.get_embedding(window))   # (name, similarity) or None
+                best, passed = taught_info(window)
+                taught = best if passed else None          # (name, similarity) or None
             except Exception:
                 # a taught-sign problem must never break built-in recognition
                 log.exception("taught-sign matching failed; using built-in only")
-                taught, taught_on = None, False
+                best, taught, taught_on = None, None, False
         if not taught_on:
             smoother.reset()   # don't carry stale votes over if signs are taught later
             return {
@@ -203,15 +254,70 @@ async def recognize(ws: WebSocket):
             "confidence": out_confidence,  # built-in probability, or taught cosine similarity
             "source": source,              # "built-in", "taught", or None when not sure
             "scores": scores,              # built-in top scores, for the score bars
-            "taught": {"name": taught[0], "similarity": taught[1]} if taught else None,
+            "taught": taught_json(best, passed),   # best taught match + whether it passed the threshold
             "hands": hands,
             "accepted": buffer.accept_label(out_label if source else None),
         }
 
+    def handle_command(cmd: dict) -> dict | None:
+        """Non-frame messages from the client. Runs in a worker thread (it may run models).
+        Every command answers with one message so the UI always knows what happened."""
+        action = cmd.get("action")
+        clips = state["clips"]
+
+        if action == "mode":
+            mode = cmd.get("mode")
+            if mode not in ("asl", "isl"):
+                return {"type": "notice", "message": f"Unknown mode {mode!r}."}
+            if mode == "isl" and recognizer.kind != "islr":
+                return {"type": "notice", "message": "ISL mode needs the pretrained ISLR model."}
+            state["mode"] = mode
+            buffer.reset()      # drop the old mode's frames and votes
+            smoother.reset()
+            return {"type": "mode", "mode": mode}
+
+        if action == "capture":          # Teach tab: take the next full window as a clip
+            if recognizer.kind != "islr":
+                return {"type": "clip_rejected", "reason": "Teaching needs the pretrained ISLR model."}
+            if len(clips) >= FEWSHOT_MAX_CLIPS:
+                return {"type": "clip_rejected", "reason": f"Already have {FEWSHOT_MAX_CLIPS} clips. Delete one or save."}
+            buffer.reset()      # only frames recorded from now on may enter the clip
+            smoother.reset()
+            state["capturing"] = True
+            return {"type": "capturing"}
+
+        if action == "delete_clip":
+            index = cmd.get("index")
+            if isinstance(index, int) and 0 <= index < len(clips):
+                clips.pop(index)
+            return {"type": "clips", "count": len(clips)}
+
+        if action == "clear_clips":
+            clips.clear()
+            return {"type": "clips", "count": 0}
+
+        if action == "save":
+            if not FEWSHOT_MIN_CLIPS <= len(clips) <= FEWSHOT_MAX_CLIPS:
+                return {"type": "save_error", "message": f"Record {FEWSHOT_MIN_CLIPS}-{FEWSHOT_MAX_CLIPS} clips first (have {len(clips)})."}
+            try:
+                fewshot.clean_name(str(cmd.get("name", "")))
+            except ValueError as e:
+                return {"type": "save_error", "message": str(e)}
+            # Clash check: run the built-in model on the clips. If it is already
+            # fairly sure a clip is one of its own signs, warn before saving.
+            if not cmd.get("confirm"):
+                hits = [(lab, conf) for lab, conf, _ in map(recognizer.predict, clips) if conf >= BUILTIN_CONFIDENT]
+                if hits:
+                    lab, conf = max(hits, key=lambda h: h[1])
+                    return {"type": "clash", "label": lab, "confidence": conf, "clips": len(hits)}
+            info = fewshot.add_sign(str(cmd["name"]), list(clips))
+            clips.clear()
+            return {"type": "saved", **info}
+        return None
+
     # Holistic runs slower than the client sends, so frames are not queued:
     # the receiver keeps only the newest one and the processor picks it up
     # when free. Queuing every frame makes latency grow without bound.
-    state = {"frame": None, "reset": False, "closed": False}
     wake = asyncio.Event()
 
     async def receive():
@@ -226,6 +332,8 @@ async def recognize(ws: WebSocket):
                     payload = {"frame": message}
                 if payload.get("action") == "reset":
                     state["reset"], state["frame"] = True, None
+                elif payload.get("action") in COMMANDS:
+                    state["commands"].append(payload)
                 elif isinstance(payload.get("frame"), str) and payload["frame"]:
                     state["frame"] = (payload["frame"], time.monotonic())
                 wake.set()
@@ -256,6 +364,13 @@ async def recognize(ws: WebSocket):
                 buffer.reset()
                 smoother.reset()
                 await ws.send_json({"type": "reset"})
+            commands, state["commands"] = state["commands"], []
+            for cmd in commands:
+                reply = await asyncio.to_thread(handle_command, cmd)
+                if state["closed"]:
+                    break
+                if reply is not None:
+                    await ws.send_json(reply)
             item, state["frame"] = state["frame"], None
             if item is None:
                 continue

@@ -144,9 +144,10 @@ def add_sign(name: str, windows: list[np.ndarray]) -> dict:
     return {"name": name, "clips": len(windows)}
 
 
-def match(embedding: np.ndarray, threshold: float = FEWSHOT_THRESHOLD) -> tuple[str, float] | None:
-    """Best-matching taught sign as (name, cosine similarity), or None if nothing is
-    taught or the best one is below the threshold (config.FEWSHOT_THRESHOLD)."""
+def best_match(embedding: np.ndarray) -> tuple[str, float] | None:
+    """Closest taught sign as (name, cosine similarity) WHATEVER the similarity,
+    or None if nothing is taught. The Teach tab shows this number so the
+    threshold can be tuned by eye."""
     with _store_lock:
         store = _read()
     if not store:
@@ -155,9 +156,23 @@ def match(embedding: np.ndarray, threshold: float = FEWSHOT_THRESHOLD) -> tuple[
     prototypes = np.array([store[n]["embedding"] for n in names], dtype=np.float32)
     sims = prototypes @ embedding          # both unit length -> dot product = cosine
     best = int(np.argmax(sims))
-    if sims[best] < threshold:
-        return None
     return names[best], float(sims[best])
+
+
+def match(embedding: np.ndarray, threshold: float = FEWSHOT_THRESHOLD) -> tuple[str, float] | None:
+    """Best-matching taught sign as (name, cosine similarity), or None if nothing is
+    taught or the best one is below the threshold (config.FEWSHOT_THRESHOLD)."""
+    best = best_match(embedding)
+    return best if best is not None and best[1] >= threshold else None
+
+
+def hand_fraction(window: np.ndarray) -> float:
+    """Share of frames in a (45, 543, 3) window where at least one hand was seen.
+    Landmark layout: face 0-467, left hand 468-488, pose 489-521, right hand 522-542;
+    undetected parts are NaN. Used to reject a clip recorded with no hands in view."""
+    left = ~np.isnan(window[:, 468:489, 0]).any(axis=1)
+    right = ~np.isnan(window[:, 522:543, 0]).any(axis=1)
+    return float((left | right).mean())
 
 
 def has_signs() -> bool:

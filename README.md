@@ -80,6 +80,8 @@ Sign → Text works straight after install. Text → Sign needs reference clips 
 | `cd backend && python -m tests.smoke_test` | install only | MediaPipe, LSTM, windowing/debounce, HTTP routes |
 | `cd backend && python -m tests.live_test` | model + `data/raw` | real server; held-out clips streamed at 12 fps: latency, accuracy, reset, malformed frames, concurrent clients, disconnects |
 | `cd frontend && npm run test:ui` | model + `data/raw` + Chrome | the React app in Chrome with a clip as fake webcam: both tabs, all controls, error states, production build |
+| `cd backend && python -m tests.combine_test` | install only | taught-vs-built-in decision rule, 3-of-5 smoothing, shared debounce |
+| `cd frontend && npm run test:teach` | model + `data/raw` + Chrome | Teach tab (countdown, clips, clash warning, save/delete, live test) and ASL / ISL modes; uses a throw-away prototypes file |
 
 ## Pretrained model (default)
 
@@ -99,6 +101,41 @@ curl -L -o data/models/islr/sign_to_prediction_index_map.json https://huggingfac
 It is used whenever those files exist. Set `SIGN_MODEL=lstm` to use the
 model trained by `ml.train` instead (e.g. for words outside the 250, such as
 numbers).
+
+## Teach a new sign (few-shot) and ASL / ISL modes
+
+The **Teach** tab adds your own signs (for example Indian Sign Language ones) **without
+retraining** the pretrained model, which is never modified.
+
+**How it works.** Just before its final 250-way layer the model holds an *embedding*: a
+vector describing what was signed. Clips of the same sign give vectors pointing the same way
+(high cosine similarity), different signs do not (`python -m ml.check_embeddings` measures
+this). So to teach a sign we embed 3-5 clips, average them into one *prototype* and store it in
+`backend/data/prototypes.json`. To recognise, we embed the live window and pick the closest
+prototype if its similarity is at least `FEWSHOT_THRESHOLD`.
+
+**Teaching** (Teach tab): start the camera, type a name, press *Record clip* (3-2-1
+countdown, then "Sign now!"; each press stores one 45-frame window through the same frame
+pipeline used for live recognition), record 3-5 clips (a bad one can be deleted), then *Save
+sign*. If the built-in model is already fairly sure a clip is one of its own signs you get a
+warning first. Keep the camera on until you save: the clips are held by the live connection.
+The *Live test* panel shows the closest taught sign, its similarity and the threshold.
+
+**Modes** (Sign → Text): **ASL mode** (default) = built-in 250 signs plus taught signs; a taught
+sign wins only if the built-in model is not confident (`BUILTIN_CONFIDENT`). **ISL mode** =
+taught signs only, built-in results ignored. Each result shows its source (built-in or taught)
+and confidence (a probability for built-in, a cosine similarity for taught). A sign is shown
+only once it wins 3 of the last 5 windows.
+
+All the numbers are in `backend/config.py`: `FEWSHOT_THRESHOLD` (0.35), `BUILTIN_CONFIDENT`
+(0.5), `SMOOTH_WINDOWS` / `SMOOTH_MIN_WINS` (5 / 3), `FEWSHOT_MIN_CLIPS` / `MAX_CLIPS` (3 / 5).
+`GET /api/prototypes`, `DELETE /api/prototypes/{name}` and `POST /api/teach` (clips as JPEG
+frames) expose the store; the Teach tab itself uses the WebSocket commands `mode`, `capture`,
+`delete_clip`, `clear_clips` and `save`.
+
+**Expect:** on recorded WLASL clips of signs the model never saw, 3 taught clips gave ~75%
+accuracy (`ml.check_embeddings`), and a single live clip of an unfamiliar signer scores much
+lower than your own taught clips. Teach with the camera, lighting and signer you will use.
 
 ## Build your vocabulary
 

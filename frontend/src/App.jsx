@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import SignToText from './components/SignToText'
 import TextToSign from './components/TextToSign'
+import Teach from './components/Teach'
 import { getHealth } from './api'
 
 export default function App() {
@@ -40,10 +41,18 @@ export default function App() {
         >
           Text → Sign
         </button>
+        <button
+          className={mode === 'teach' ? 'active' : ''}
+          onClick={() => setMode('teach')}
+        >
+          Teach
+        </button>
       </nav>
 
       <main>
-        {mode === 'sign-to-text' ? <SignToText health={health} /> : <TextToSign />}
+        {mode === 'sign-to-text' && <SignToText health={health} />}
+        {mode === 'text-to-sign' && <TextToSign />}
+        {mode === 'teach' && <Teach health={health} />}
       </main>
     </div>
   )
