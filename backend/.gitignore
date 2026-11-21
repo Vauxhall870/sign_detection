@@ -5,3 +5,4 @@ data/signs/
 data/raw/
 data/wlasl_samples.json
 tests/*.log
+data/embedding_cache/
