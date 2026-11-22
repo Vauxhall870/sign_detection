@@ -145,6 +145,11 @@ frames) expose the store; the Teach tab itself uses the WebSocket commands `mode
 accuracy (`ml.check_embeddings`), and a single live clip of an unfamiliar signer scores much
 lower than your own taught clips. Teach with the camera, lighting and signer you will use.
 
+**Evaluation.** `cd backend && python -m ml.evaluate` measures K-shot accuracy, an LSTM baseline,
+the threshold sweep, speed and an ISL confusion matrix, and writes CSVs, plots and `results.md`
+to `backend/results/` (needs the taught clips in `data/eval_clips/` and `data/raw`). It never
+touches the live app. The old LSTM held-out scorer is now `python -m ml.evaluate_lstm`.
+
 ## Build your vocabulary
 
 ## Option A — train on WLASL (no webcam needed)
