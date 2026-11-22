@@ -150,4 +150,5 @@ button.danger { background: var(--danger); }
   padding: 8px 12px; background: #0d0f13; border: 1px solid var(--border); border-radius: 8px;
 }
 .muted { color: var(--muted); font-size: 0.85rem; }
+.dev-badge { display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; background: var(--muted); color: #fff; }
 .test-toggle { display: block; margin: 12px 0 4px; font-size: 0.85rem; color: var(--muted); }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { deletePrototype, getPrototypes, getTestClips } from '../api'
 import { useRecognizerSocket } from '../useRecognizerSocket'
+import { DEV_MODE } from '../devMode'
 
 const COUNTDOWN_SECONDS = 3
 const MIN_CLIPS = 3
@@ -35,7 +36,7 @@ export default function Teach({ health }) {
   const clearTimers = () => { timers.current.forEach((t) => { clearInterval(t); clearTimeout(t) }); timers.current = [] }
   const refreshTaught = () => getPrototypes().then(setTaught).catch(() => {})
   const refreshTestCounts = () => getTestClips().then(setTestCounts).catch(() => {})
-  useEffect(() => { refreshTaught(); refreshTestCounts(); return clearTimers }, [])
+  useEffect(() => { refreshTaught(); if (DEV_MODE) refreshTestCounts(); return clearTimers }, [])
 
   const { videoRef, canvasRef, streaming, status, start, stop, send } = useRecognizerSocket((msg) => {
     // The Teach tab only needs taught-sign matching, so it runs the backend in "isl" mode
@@ -134,10 +135,13 @@ export default function Teach({ health }) {
         <span className="status">{status}</span>
       </div>
 
-      <label className="test-toggle">
-        <input type="checkbox" checked={testMode} onChange={(e) => { setTestMode(e.target.checked); setClash(null); setMessage(null) }} />
-        {' '}Record test clips only (session 2): saves clips for accuracy tests and does <strong>not</strong> teach or change any sign
-      </label>
+      {/* Developer mode only (?dev=1): record clips for accuracy tests instead of teaching */}
+      {DEV_MODE && (
+        <label className="test-toggle">
+          <input type="checkbox" checked={testMode} onChange={(e) => { setTestMode(e.target.checked); setClash(null); setMessage(null) }} />
+          {' '}Record test clips only (session 2): saves clips for accuracy tests and does <strong>not</strong> teach or change any sign
+        </label>
+      )}
 
       <h3 className="section">1. Name the sign</h3>
       <div className="composer">
@@ -147,12 +151,14 @@ export default function Teach({ health }) {
           placeholder="Sign name, e.g. namaste"
           maxLength={40}
           aria-label="Sign name"
-          list="session1-signs"
+          list={DEV_MODE ? 'session1-signs' : undefined}
         />
         {/* suggest the exact session-1 sign names so the two sessions line up */}
-        <datalist id="session1-signs">
-          {Object.keys(testCounts.session1).map((n) => <option key={n} value={n} />)}
-        </datalist>
+        {DEV_MODE && (
+          <datalist id="session1-signs">
+            {Object.keys(testCounts.session1).map((n) => <option key={n} value={n} />)}
+          </datalist>
+        )}
       </div>
 
       <h3 className="section">2. Record {MIN_CLIPS}-{MAX_CLIPS} clips</h3>

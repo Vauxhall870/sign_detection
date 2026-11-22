@@ -3,6 +3,7 @@ import SignToText from './components/SignToText'
 import TextToSign from './components/TextToSign'
 import Teach from './components/Teach'
 import { getHealth } from './api'
+import { DEV_MODE } from './devMode'
 
 export default function App() {
   const [mode, setMode] = useState('sign-to-text')
@@ -18,6 +19,7 @@ export default function App() {
       <header>
         <h1>Sign Language Translator</h1>
         <p className="sub">Deep learning sign recognition, both directions.</p>
+        {DEV_MODE && <span className="dev-badge">Developer mode</span>}
       </header>
 
       {error && <div className="banner error">{error} — is the FastAPI server running on :8000?</div>}

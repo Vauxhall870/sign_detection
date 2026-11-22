@@ -135,6 +135,9 @@ or reuse the name of a taught sign (it would be replaced).
 45×543×3 landmark window), at most 8 per sign (oldest dropped first; `FEWSHOT_EVAL_MAX_CLIPS`),
 for measuring accuracy later. The folder is git-ignored.
 
+**Developer mode.** Testing-only controls are hidden by default so the demo stays clean. Open
+`http://localhost:5173/?dev=1` to show them (currently: the test-clips option below).
+
 **Second session (cross-session test).** In the Teach tab tick *Record test clips only (session 2)*.
 Recording works as usual, but *Save test clips* writes the clips to `backend/data/eval_clips_session2/<sign>/`
 and teaches nothing: no prototype is changed and `eval_clips/` (session 1) is never touched.

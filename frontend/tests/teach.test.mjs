@@ -39,7 +39,7 @@ async function waitFor(url, ms = 120000) {
   throw new Error(`${url} did not come up`)
 }
 
-async function openApp(camera) {
+async function openApp(camera, query = '') {
   const browser = await chromium.launch({
     channel: 'chrome', headless: true,
     args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${camera}`],
@@ -48,7 +48,7 @@ async function openApp(camera) {
   const errors = []
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
   page.on('pageerror', (e) => errors.push(String(e)))
-  await page.goto(APP)
+  await page.goto(APP + query)
   await page.waitForFunction(() => !document.querySelector('.controls button')?.disabled, null, { timeout: 20000 })
   return { browser, page, errors }
 }
@@ -190,11 +190,26 @@ async function deleteSign(camera) {
   await browser.close()
 }
 
+async function normalModeHidesDevControls(camera) {
+  console.log('\nNormal mode hides testing-only controls; ?dev=1 shows them')
+  const { browser, page } = await openApp(camera)
+  await page.getByRole('button', { name: 'Teach', exact: true }).click()
+  check('normal: no test-clips option', (await page.getByText('Record test clips only').count()) === 0)
+  check('normal: no developer badge, no name suggestions',
+    (await page.locator('.dev-badge').count()) === 0 && (await page.locator('datalist').count()) === 0)
+  check('normal: demo controls present',
+    (await page.getByLabel('Sign name').count()) === 1 && (await page.getByRole('button', { name: 'Record clip' }).count()) === 1 &&
+    (await page.getByRole('button', { name: 'Save sign' }).count()) === 1 && (await page.locator('.live-test').count()) === 1 &&
+    (await page.getByText('Taught signs').count()) >= 1)
+  await browser.close()
+}
+
 async function testClipsMode(camera) {
   console.log('\nTest-clips mode (session 2): saves clips, teaches nothing')
   const session1 = () => readdirSync(join(tmp, 'eval', 'my_drink')).length
   const before = session1()
-  const { browser, page, errors } = await openApp(camera)
+  const { browser, page, errors } = await openApp(camera, '/?dev=1')
+  check('dev mode shows a "Developer mode" badge', (await page.locator('.dev-badge').count()) === 1)
   await page.getByRole('button', { name: 'Teach', exact: true }).click()
   await page.getByLabel('Record test clips only (session 2)', { exact: false }).check()
   await page.getByRole('button', { name: 'Start camera' }).click()
@@ -232,6 +247,7 @@ try {
   await teachFlow(camera)
   await modes(camera)
   await deleteSign(camera)
+  await normalModeHidesDevControls(camera)
   await testClipsMode(camera)
 } catch (e) {
   failures.push(`crashed: ${e.message}`)
