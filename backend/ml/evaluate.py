@@ -19,6 +19,8 @@ Experiments (each writes a CSV and a plot):
   3. Threshold sweep   0.20 .. 0.50: share of correct signs accepted vs wrong signs accepted.
   4. Speed             milliseconds per window in ISL mode.
   5. Confusion matrix  ISL at K = 3: which signs get mixed up.
+  6. Cross-session     teach with session-1 clips, test ONLY on session-2 clips
+                       (data/eval_clips_session2), plus a cross-session confusion matrix at K = 3.
 
 How an "episode" works (it simulates teaching, then testing):
   - pick the signs (ISL: all 10; WLASL: 5 random of the 7 new ones)
@@ -41,7 +43,7 @@ from pathlib import Path
 import numpy as np
 from scipy import stats
 
-from config import DATA_DIR, FEWSHOT_EVAL_DIR, FEWSHOT_THRESHOLD, ISLR_LABELS_PATH, ISLR_MODEL_PATH, BASE_DIR
+from config import DATA_DIR, FEWSHOT_EVAL2_DIR, FEWSHOT_EVAL_DIR, FEWSHOT_THRESHOLD, ISLR_LABELS_PATH, ISLR_MODEL_PATH, BASE_DIR
 from ml import fewshot
 from ml.fewshot import unit
 
@@ -290,6 +292,123 @@ def exp_threshold(isl_emb, wlasl_emb, n_episodes, k=3):
     return rows
 
 
+def load_session2_windows() -> dict[str, list[np.ndarray]]:
+    """Session 2: the clips recorded later with the Teach tab's test-clips mode
+    (data/eval_clips_session2/<sign>/*.npy). Same format as session 1."""
+    return {d.name: [np.load(f) for f in sorted(d.glob("clip_*.npy"))]
+            for d in sorted(FEWSHOT_EVAL2_DIR.iterdir()) if d.is_dir()}
+
+
+def exp_cross_session(s1_emb, s2_emb, n_episodes):
+    """Experiment 6: teach with K clips of session 1, test ONLY on session 2 clips.
+    The session-2 clips were recorded later and are never used for teaching, so this asks
+    'does a sign taught today still work on another day / another recording?'.
+    For comparison the same-session numbers are recomputed with the very same episodes as
+    experiment 1 (teach K clips of session 1, test on the other session-1 clips).
+    Also reports how often the CORRECT sign is accepted at the app's threshold.
+    -> (summary rows, per-sign rows, confusion at K=3 as (signs, counts))"""
+    signs = sorted(s1_emb)
+    rows, per_sign, confusion = [], [], None
+    for k in KS:
+        # --- same session (identical episodes to experiment 1) ---
+        same = make_episodes({s: len(v) for s, v in s1_emb.items()}, None, k, n_episodes, seed=[SEED, 0, k])
+        res = [run_prototype_episode(s1_emb, ep) for ep in same]
+        # --- cross session: support from session 1, queries = every session-2 clip ---
+        rng = np.random.default_rng([SEED, 7, k])
+        cross_res, conf, hits = [], np.zeros((len(signs),) * 2), np.zeros(len(signs))
+        for _ in range(n_episodes):
+            support = {s: rng.permutation(len(s1_emb[s]))[:k] for s in signs}
+            protos = np.stack([unit(s1_emb[s][support[s]].mean(axis=0)) for s in signs])
+            true, pred, sim = [], [], []
+            for i, s in enumerate(signs):
+                sims = s2_emb[s] @ protos.T
+                true += [i] * len(sims)
+                pred += list(sims.argmax(axis=1))
+                sim += list(sims.max(axis=1))
+            true, pred, sim = np.array(true), np.array(pred), np.array(sim)
+            cross_res.append((true, pred, sim))
+            np.add.at(conf, (true, pred), 1)
+            np.add.at(hits, true, (true == pred))
+        for label, results in (("same-session (test on other session-1 clips)", res),
+                               ("cross-session (test on session-2 clips)", cross_res)):
+            acc = [float((t == p).mean()) for t, p, _ in results]
+            acc_thr = [float(((t == p) & (s >= FEWSHOT_THRESHOLD)).mean()) for t, p, s in results]
+            correct_sim = float(np.mean([s[t == p].mean() for t, p, s in results]))
+            m, ci = mean_ci(acc)
+            mt, cit = mean_ci(acc_thr)
+            rows.append(dict(setting=label, k=k, episodes=len(acc), mean=m, ci95=ci,
+                             correct_and_accepted_at_threshold=mt, correct_and_accepted_ci95=cit,
+                             threshold=FEWSHOT_THRESHOLD, mean_similarity_when_correct=correct_sim))
+            print(f"  K={k}  {label:<46s} {m:6.1%} ± {ci:.1%}   correct & >= {FEWSHOT_THRESHOLD}: {mt:.1%}")
+        if k == 3:
+            confusion = (signs, conf)
+            per_sign += [dict(sign=s, cross_session_accuracy_k3=hits[i] / conf[i].sum()) for i, s in enumerate(signs)]
+    return rows, per_sign, confusion
+
+
+def make_cross_plots(rows, confusion):
+    """cross_session_comparison.png (same vs cross session) and cross_session_confusion_k3.png."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), sharey=True)
+    panels = (("mean", "ci95", "Accuracy (closest taught sign is the right one)"),
+              ("correct_and_accepted_at_threshold", "correct_and_accepted_ci95",
+               f"Right sign AND similarity >= {FEWSHOT_THRESHOLD} (what the app shows)"))
+    for ax, (key, ci_key, title) in zip(axes, panels):
+        for j, (name, color, note) in enumerate((("same-session", "tab:blue", "test: other session-1 clips"),
+                                                 ("cross-session", "tab:orange", "test: session-2 clips"))):
+            rs = sorted((r for r in rows if r["setting"].startswith(name)), key=lambda r: r["k"])
+            ax.bar(np.arange(len(rs)) + (j - 0.5) * 0.38, [r[key] * 100 for r in rs], 0.38,
+                   yerr=[r[ci_key] * 100 for r in rs], capsize=4, color=color, label=f"{name} ({note})")
+        ax.set_xticks(range(len(KS)))
+        ax.set_xticklabels([f"K={k}" for k in KS])
+        ax.set_title(title, fontsize=9)
+        ax.grid(axis="y", alpha=.3)
+        ax.set_ylim(0, 105)
+        ax.axhline(10, color="gray", ls=":")
+    axes[0].set_ylabel("% of test clips [mean ± 95% CI]")
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=2, fontsize=8, title="dotted line = chance (10%)", title_fontsize=8)
+    fig.suptitle("Experiment 6: ISL 10-way, same-session vs cross-session (taught with session 1)")
+    fig.tight_layout(rect=(0, 0.12, 1, 1))
+    fig.savefig(RESULTS_DIR / "cross_session_comparison.png", dpi=150)
+    plt.close(fig)
+
+    signs, conf = confusion
+    pct = conf / conf.sum(axis=1, keepdims=True) * 100
+    fig, ax = plt.subplots(figsize=(7.5, 6.5))
+    im = ax.imshow(pct, cmap="Blues", vmin=0, vmax=100)
+    ax.set_xticks(range(len(signs)))
+    ax.set_xticklabels(signs, rotation=45, ha="right")
+    ax.set_yticks(range(len(signs)))
+    ax.set_yticklabels(signs)
+    for i in range(len(signs)):
+        for j in range(len(signs)):
+            if pct[i, j] >= 0.5:
+                ax.text(j, i, f"{pct[i, j]:.0f}", ha="center", va="center", fontsize=7,
+                        color="white" if pct[i, j] > 55 else "black")
+    ax.set_xlabel("predicted sign")
+    ax.set_ylabel("true sign (session-2 clip)")
+    ax.set_title("Experiment 6: CROSS-session confusion matrix, K = 3\n(taught with session 1, tested on session 2; % per row)")
+    fig.colorbar(im, label="%")
+    fig.tight_layout()
+    fig.savefig(RESULTS_DIR / "cross_session_confusion_k3.png", dpi=150)
+    plt.close(fig)
+
+
+def read_csv_rows(path: Path) -> list[dict]:
+    """Load a results CSV back, turning numeric-looking cells into numbers."""
+    def conv(v):
+        try:
+            return int(v) if v.lstrip("-").isdigit() else float(v)
+        except ValueError:
+            return v
+    with open(path, newline="", encoding="utf-8") as f:
+        return [{k: conv(v) for k, v in row.items()} for row in csv.DictReader(f)]
+
+
 def exp_speed(isl_windows, wlasl_frames_path):
     """Experiment 4: milliseconds per window in ISL mode, on this machine's CPU.
     ISL mode per frame = MediaPipe Holistic + embedding + matching (the built-in model is not run).
@@ -421,7 +540,7 @@ def make_plots(summary, thr_rows, confusion, speed_rows):
     fig.savefig(RESULTS_DIR / "speed.png", dpi=150); plt.close(fig)
 
 
-def write_markdown(summary, thr_rows, confusion, speed_rows, args, n_clips):
+def write_markdown(summary, thr_rows, confusion, speed_rows, args, n_clips, cross=None):
     """results.md: the numbers (generated) plus the caveats (fixed text)."""
     f = lambda r: f"{r['mean'] * 100:.1f}% ± {r['ci95'] * 100:.1f}"
     L = ["# Few-shot sign teaching: evaluation results", "",
@@ -441,7 +560,8 @@ def write_markdown(summary, thr_rows, confusion, speed_rows, args, n_clips):
     L += ["", "## 3. Threshold sweep, K = 3 (`threshold_sweep.png`, `threshold_sweep.csv`)", "",
           "*Correct accepted* = the clip's closest prototype is the right sign AND similarity >= threshold. "
           "*Not-taught accepted* = a clip of a sign that was never taught still scores >= threshold against some taught sign "
-          "(the app would wrongly show a taught word). The app uses 0.35.", "",
+          "(the app would wrongly show a taught word). The app now uses "
+          f"{FEWSHOT_THRESHOLD} (it was 0.35 when this sweep was first run; the sweep itself is unchanged).", "",
           "| Setting | Threshold | Correct accepted | Wrong label accepted | Not-taught accepted |", "|---|---|---|---|---|"]
     for r in thr_rows:
         if round(r["threshold"] * 40) % 2 == 0 or abs(r["threshold"] - FEWSHOT_THRESHOLD) < 1e-9:   # every 0.05, plus 0.35
@@ -455,10 +575,32 @@ def write_markdown(summary, thr_rows, confusion, speed_rows, args, n_clips):
     L += ["", "## 5. ISL confusion matrix, K = 3 (`confusion_isl_k3.png`, `confusion_isl_k3.csv`)", "",
           "Most frequent mix-ups (true sign -> predicted sign, % of that sign's test clips):", ""]
     L += [f"- {a} -> {b}: {p:.1f}%" for p, a, b in pairs if p > 0] or ["- none"]
+    if cross:
+        rows, per_sign, cconf = cross
+        csigns, cc = cconf
+        cpct = cc / cc.sum(axis=1, keepdims=True) * 100
+        L += ["", "## 6. Cross-session: teach with session 1, test on session 2 (`cross_session_comparison.png`, `cross_session.csv`)", "",
+              "Session 1 = the clips taught on the first day; session 2 = clips of the same 10 signs recorded later (5 per sign), "
+              "never used for teaching. Same-session = teach K session-1 clips, test on the other session-1 clips. "
+              f"'Shown by the app' = right sign AND similarity >= {FEWSHOT_THRESHOLD}.", "",
+              "| K | Setting | Accuracy | Right sign and shown by the app | Mean similarity when right |", "|---|---|---|---|---|"]
+        for r in rows:
+            L.append(f"| {r['k']} | {r['setting']} | {r['mean'] * 100:.1f}% ± {r['ci95'] * 100:.1f} | "
+                     f"{r['correct_and_accepted_at_threshold'] * 100:.1f}% ± {r['correct_and_accepted_ci95'] * 100:.1f} | "
+                     f"{r['mean_similarity_when_correct']:.2f} |")
+        L += ["", "Cross-session accuracy per sign at K = 3 (lowest first; confusion matrix in "
+              "`cross_session_confusion_k3.png` / `.csv`):", ""]
+        L += [f"- {r['sign']}: {r['cross_session_accuracy_k3'] * 100:.0f}%"
+              for r in sorted(per_sign, key=lambda r: r['cross_session_accuracy_k3'])]
+        cp = sorted(((cpct[i, j], csigns[i], csigns[j]) for i in range(len(csigns)) for j in range(len(csigns)) if i != j),
+                    reverse=True)[:6]
+        L += ["", "Most frequent cross-session mix-ups (true -> predicted, % of that sign's session-2 clips):", ""]
+        L += [f"- {a} -> {b}: {p:.1f}%" for p, a, b in cp if p > 0] or ["- none"]
     L += ["", "## Limitations", "",
-          "- **One signer, one session (ISL).** All ISL clips were recorded back to back by one person with one camera, "
-          "so test clips are near-duplicates of the teaching clips. The ISL numbers are an upper bound for "
-          "'the same person using the app right after teaching'; they say nothing about other signers.",
+          "- **One signer (ISL).** Session-1 numbers (experiments 1-5) come from clips recorded back to back, so test clips "
+          "are near-duplicates of the teaching clips: an upper bound. Experiment 6 adds a second session, a much fairer "
+          "test, but it is still the same person, so nothing here says how well other signers would do. "
+          "Session 2 has only 5 clips per sign (50 test clips in total), so its numbers are coarse.",
           "- **WLASL is the opposite problem:** many signers and cameras, but only 13-16 clips per sign and only 7 new signs, "
           "so the 5-way task reuses the same few signs in different combinations.",
           "- **Episodes are not independent.** They resample the same small clip pool, so the confidence intervals "
@@ -470,15 +612,18 @@ def write_markdown(summary, thr_rows, confusion, speed_rows, args, n_clips):
           "- **Threshold sweep:** 'not taught' signs are only a few signs (one ISL sign per episode, 2 WLASL signs) so the "
           "false-accept rates are rough. WLASL-as-negatives also differs in camera and signer, which can make rejection look easier.",
           "- **Speed** is for this laptop CPU with nothing else running; the live app adds JPEG decoding and WebSocket time.",
-          "- Mirrored (left-handed) signing, lighting changes, and signers who are not the teacher were not tested for ISL."]
+          "- Mirrored (left-handed) signing and signers who are not the teacher were not tested for ISL; "
+          "the LSTM baseline was not run cross-session."]
     (RESULTS_DIR / "results.md").write_text("\n".join(L) + "\n", encoding="utf-8")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--episodes", type=int, default=400, help="random episodes per setting (prototype method)")
-    ap.add_argument("--lstm-episodes", type=int, default=30, help="how many of those episodes also train the LSTM (0 = skip)")
+    ap.add_argument("--lstm-episodes", type=int, default=25, help="how many of those episodes also train the LSTM (0 = skip)")
     ap.add_argument("--lstm-epochs", type=int, default=60)
+    ap.add_argument("--cross-session-only", action="store_true",
+                    help="run only experiment 6 and rebuild results.md from the CSVs of the previous full run")
     args = ap.parse_args()
     RESULTS_DIR.mkdir(exist_ok=True)
 
@@ -490,37 +635,63 @@ def main():
     print(f"ISL: {', '.join(f'{s}({len(v)})' for s, v in isl_w.items())}")
     print(f"WLASL new: {', '.join(f'{s}({len(v)})' for s, v in wl_w.items())}")
     isl_e, wl_e = embed_all(isl_w), embed_all(wl_w)
-    wl_every = embed_all(wl_all)                                      # all WLASL clips, used as 'not taught' negatives
-
-    print("\n[1-2] K-shot accuracy")
-    summary, per_ep, confusion = exp_kshot(
-        [("ISL", isl_e, isl_w, None), ("WLASL", wl_e, wl_w, 5)], args.episodes, args.lstm_episodes, args.lstm_epochs)
-    write_csv(RESULTS_DIR / "kshot_accuracy.csv", summary)
-    write_csv(RESULTS_DIR / "kshot_episodes.csv", per_ep)
-
-    print("\n[3] threshold sweep")
-    thr = exp_threshold(isl_e, wl_every, args.episodes)
-    write_csv(RESULTS_DIR / "threshold_sweep.csv", thr)
-
-    print("\n[4] speed")
-    some_clip = next(iter(sorted((RAW_DIR / "drink").glob("*.mp4"))))
-    speed = exp_speed(isl_w, some_clip)
-    write_csv(RESULTS_DIR / "speed.csv", speed)
-    for r in speed:
-        print(f"  {r['step']:<70s} {r['mean_ms']:7.1f} ms")
-
-    print("\n[5] confusion matrix")
-    signs, conf = confusion
-    pct = conf / conf.sum(axis=1, keepdims=True) * 100
-    with open(RESULTS_DIR / "confusion_isl_k3.csv", "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["true \\ predicted (% of test clips)"] + signs)
-        for s, row in zip(signs, pct):
-            w.writerow([s] + [f"{v:.1f}" for v in row])
-
     n_clips = {"ISL": sum(len(v) for v in isl_w.values()), "WLASL": sum(len(v) for v in wl_w.values())}
-    make_plots(summary, thr, confusion, speed)
-    write_markdown(summary, thr, confusion, speed, args, n_clips)
+
+    if not args.cross_session_only:
+        wl_every = embed_all(wl_all)                                  # all WLASL clips, used as 'not taught' negatives
+        print("\n[1-2] K-shot accuracy")
+        summary, per_ep, confusion = exp_kshot(
+            [("ISL", isl_e, isl_w, None), ("WLASL", wl_e, wl_w, 5)], args.episodes, args.lstm_episodes, args.lstm_epochs)
+        write_csv(RESULTS_DIR / "kshot_accuracy.csv", summary)
+        write_csv(RESULTS_DIR / "kshot_episodes.csv", per_ep)
+
+        print("\n[3] threshold sweep")
+        thr = exp_threshold(isl_e, wl_every, args.episodes)
+        write_csv(RESULTS_DIR / "threshold_sweep.csv", thr)
+
+        print("\n[4] speed")
+        some_clip = next(iter(sorted((RAW_DIR / "drink").glob("*.mp4"))))
+        speed = exp_speed(isl_w, some_clip)
+        write_csv(RESULTS_DIR / "speed.csv", speed)
+        for r in speed:
+            print(f"  {r['step']:<70s} {r['mean_ms']:7.1f} ms")
+
+        print("\n[5] confusion matrix")
+        signs, conf = confusion
+        pct = conf / conf.sum(axis=1, keepdims=True) * 100
+        with open(RESULTS_DIR / "confusion_isl_k3.csv", "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["true \\ predicted (% of test clips)"] + signs)
+            for s, row in zip(signs, pct):
+                w.writerow([s] + [f"{v:.1f}" for v in row])
+        make_plots(summary, thr, confusion, speed)
+    else:
+        # reuse the numbers of the previous full run (only experiment 6 is new)
+        summary = read_csv_rows(RESULTS_DIR / "kshot_accuracy.csv")
+        thr = read_csv_rows(RESULTS_DIR / "threshold_sweep.csv")
+        speed = read_csv_rows(RESULTS_DIR / "speed.csv")
+        with open(RESULTS_DIR / "confusion_isl_k3.csv", newline="", encoding="utf-8") as f:
+            table = list(csv.reader(f))
+        confusion = (table[0][1:], np.array([[float(v) for v in r[1:]] for r in table[1:]]))   # rows already sum to 100
+
+    print("\n[6] cross-session (teach with session 1, test on session 2)")
+    s2_w = load_session2_windows()
+    print(f"session 2: {', '.join(f'{s}({len(v)})' for s, v in s2_w.items())}")
+    if sorted(s2_w) != sorted(isl_w):
+        raise SystemExit("session 2 must contain exactly the same signs as session 1")
+    rows, per_sign, cconf = exp_cross_session(isl_e, embed_all(s2_w), args.episodes)
+    write_csv(RESULTS_DIR / "cross_session.csv", rows)
+    write_csv(RESULTS_DIR / "cross_session_by_sign.csv", per_sign)
+    csigns, cc = cconf
+    cpct = cc / cc.sum(axis=1, keepdims=True) * 100
+    with open(RESULTS_DIR / "cross_session_confusion_k3.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["true \\ predicted (% of session-2 clips)"] + csigns)
+        for s, row in zip(csigns, cpct):
+            w.writerow([s] + [f"{v:.1f}" for v in row])
+    make_cross_plots(rows, cconf)
+
+    write_markdown(summary, thr, confusion, speed, args, n_clips, cross=(rows, per_sign, cconf))
     print(f"\nwrote CSVs, plots and results.md to {RESULTS_DIR}")
 
 

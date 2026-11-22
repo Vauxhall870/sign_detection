@@ -19,7 +19,7 @@ Mean accuracy % ± 95% CI over episodes. Teaching clips are never used as test c
 
 ## 3. Threshold sweep, K = 3 (`threshold_sweep.png`, `threshold_sweep.csv`)
 
-*Correct accepted* = the clip's closest prototype is the right sign AND similarity >= threshold. *Not-taught accepted* = a clip of a sign that was never taught still scores >= threshold against some taught sign (the app would wrongly show a taught word). The app uses 0.35.
+*Correct accepted* = the clip's closest prototype is the right sign AND similarity >= threshold. *Not-taught accepted* = a clip of a sign that was never taught still scores >= threshold against some taught sign (the app would wrongly show a taught word). The app now uses 0.45 (it was 0.35 when this sweep was first run; the sweep itself is unchanged).
 
 | Setting | Threshold | Correct accepted | Wrong label accepted | Not-taught accepted |
 |---|---|---|---|---|
@@ -62,12 +62,43 @@ Most frequent mix-ups (true sign -> predicted sign, % of that sign's test clips)
 
 - flower -> happy: 2.0%
 
+## 6. Cross-session: teach with session 1, test on session 2 (`cross_session_comparison.png`, `cross_session.csv`)
+
+Session 1 = the clips taught on the first day; session 2 = clips of the same 10 signs recorded later (5 per sign), never used for teaching. Same-session = teach K session-1 clips, test on the other session-1 clips. 'Shown by the app' = right sign AND similarity >= 0.45.
+
+| K | Setting | Accuracy | Right sign and shown by the app | Mean similarity when right |
+|---|---|---|---|---|
+| 1 | same-session (test on other session-1 clips) | 99.6% ± 0.1 | 96.4% ± 0.3 | 0.79 |
+| 1 | cross-session (test on session-2 clips) | 98.4% ± 0.2 | 77.4% ± 0.7 | 0.61 |
+| 3 | same-session (test on other session-1 clips) | 99.8% ± 0.1 | 98.6% ± 0.1 | 0.85 |
+| 3 | cross-session (test on session-2 clips) | 99.9% ± 0.1 | 88.0% ± 0.4 | 0.66 |
+| 5 | same-session (test on other session-1 clips) | 100.0% ± 0.0 | 98.6% ± 0.2 | 0.86 |
+| 5 | cross-session (test on session-2 clips) | 100.0% ± 0.0 | 90.0% ± 0.2 | 0.67 |
+
+Cross-session accuracy per sign at K = 3 (lowest first; confusion matrix in `cross_session_confusion_k3.png` / `.csv`):
+
+- flower: 99%
+- beautiful: 100%
+- car: 100%
+- happy: 100%
+- house: 100%
+- namaste: 100%
+- sad: 100%
+- short: 100%
+- table: 100%
+- tall: 100%
+
+Most frequent cross-session mix-ups (true -> predicted, % of that sign's session-2 clips):
+
+- flower -> happy: 1.2%
+- flower -> table: 0.1%
+
 ## Limitations
 
-- **One signer, one session (ISL).** All ISL clips were recorded back to back by one person with one camera, so test clips are near-duplicates of the teaching clips. The ISL numbers are an upper bound for 'the same person using the app right after teaching'; they say nothing about other signers.
+- **One signer (ISL).** Session-1 numbers (experiments 1-5) come from clips recorded back to back, so test clips are near-duplicates of the teaching clips: an upper bound. Experiment 6 adds a second session, a much fairer test, but it is still the same person, so nothing here says how well other signers would do. Session 2 has only 5 clips per sign (50 test clips in total), so its numbers are coarse.
 - **WLASL is the opposite problem:** many signers and cameras, but only 13-16 clips per sign and only 7 new signs, so the 5-way task reuses the same few signs in different combinations.
 - **Episodes are not independent.** They resample the same small clip pool, so the confidence intervals describe variation from *which clips were picked*, not from new signers or new days. Real uncertainty is larger.
 - **The LSTM baseline** is trained from scratch on K x signs sequences (plus 8 random temporal subsamples of each) for 60 epochs, with no tuning, and on the first 25 episodes only. It is the project's architecture, not the strongest possible few-shot baseline. Its input is rebuilt from the saved 543-landmark windows (pose visibility set to 1), not from raw video.
 - **Threshold sweep:** 'not taught' signs are only a few signs (one ISL sign per episode, 2 WLASL signs) so the false-accept rates are rough. WLASL-as-negatives also differs in camera and signer, which can make rejection look easier.
 - **Speed** is for this laptop CPU with nothing else running; the live app adds JPEG decoding and WebSocket time.
-- Mirrored (left-handed) signing, lighting changes, and signers who are not the teacher were not tested for ISL.
+- Mirrored (left-handed) signing and signers who are not the teacher were not tested for ISL; the LSTM baseline was not run cross-session.

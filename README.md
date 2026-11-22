@@ -152,7 +152,7 @@ lower than your own taught clips. Teach with the camera, lighting and signer you
 **Evaluation.** `cd backend && python -m ml.evaluate` measures K-shot accuracy, an LSTM baseline,
 the threshold sweep, speed and an ISL confusion matrix, and writes CSVs, plots and `results.md`
 to `backend/results/` (needs the taught clips in `data/eval_clips/` and `data/raw`). It never
-touches the live app. The old LSTM held-out scorer is now `python -m ml.evaluate_lstm`.
+touches the live app. `--cross-session-only` runs just the session-1-to-session-2 experiment (session-2 clips from the Teach tab) and rebuilds `results.md` from the saved CSVs. The old LSTM held-out scorer is now `python -m ml.evaluate_lstm`.
 
 ## Build your vocabulary
 
