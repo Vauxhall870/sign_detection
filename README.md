@@ -168,9 +168,6 @@ the dataset, not the pipeline. If you change `ml/landmarks.py`, re-run `preproce
 
 ## Credits
 
-- **Original app** (FastAPI + MediaPipe + LSTM + React Sign↔Text translator and the pretrained-model
-  integration): by **KISHORE-KUMAR-S** and **nithyasris21**, from this project's earlier commits. The
-  Teach feature, ASL/ISL modes, evaluation and developer mode build on top of that work.
 - **Pretrained sign recognition model:** the 1st-place solution of Google's Kaggle
   [ASL Signs](https://www.kaggle.com/competitions/asl-signs) competition, as published on Hugging Face at
   [sign/kaggle-asl-signs-1st-place](https://huggingface.co/sign/kaggle-asl-signs-1st-place) (MIT licence).
