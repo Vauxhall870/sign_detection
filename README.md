@@ -135,7 +135,7 @@ or reuse the name of a taught sign (it would be replaced).
 45×543×3 landmark window), at most 8 per sign (oldest dropped first; `FEWSHOT_EVAL_MAX_CLIPS`),
 for measuring accuracy later. The folder is git-ignored.
 
-All the numbers are in `backend/config.py`: `FEWSHOT_THRESHOLD` (0.35), `BUILTIN_CONFIDENT`
+All the numbers are in `backend/config.py`: `FEWSHOT_THRESHOLD` (0.45), `BUILTIN_CONFIDENT`
 (0.5, now only the save-warning bar), `SMOOTH_WINDOWS` / `SMOOTH_MIN_WINS` (5 / 3), `FEWSHOT_MIN_CLIPS` / `MAX_CLIPS` (3 / 8).
 `GET /api/prototypes`, `DELETE /api/prototypes/{name}` and `POST /api/teach` (clips as JPEG
 frames) expose the store; the Teach tab itself uses the WebSocket commands `mode`, `capture`,

@@ -35,8 +35,11 @@ FEWSHOT_PROTOTYPES_PATH = Path(os.environ.get("FEWSHOT_PROTOTYPES", DATA_DIR / "
 # for it to count as a match. THE ONE PLACE TO TUNE IT. From ml/check_embeddings.py
 # (3 taught clips): 0.30 accepts 69% of taught-sign clips but lets 16% of built-in
 # sign clips through; 0.35 accepts 61% / 11%; 0.40 accepts 53% / 6%. Raise it if
+# Raised from 0.35 to 0.45 after ml/evaluate.py (results/results.md, K=3): on ISL signs it keeps
+# 98.5% of correct matches while wrongly accepting only ~3-7% of never-taught signs (17.7% at 0.35).
+# On WLASL signs 0.45 accepts fewer correct matches (60% vs 72%).
 # taught signs fire by mistake, lower it if they are missed.
-FEWSHOT_THRESHOLD = 0.35
+FEWSHOT_THRESHOLD = 0.45
 # Built-in vs taught (ml/combine.py). The two scores are on different scales (a
 # softmax probability vs a cosine similarity), so they are not compared directly.
 # Rule: a taught sign wins only if the built-in model is NOT confident, i.e. its
