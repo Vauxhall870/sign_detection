@@ -21,6 +21,7 @@ import time
 import numpy as np
 
 from config import (
+    FEWSHOT_EVAL2_DIR,
     FEWSHOT_EVAL_DIR,
     FEWSHOT_EVAL_MAX_CLIPS,
     FEWSHOT_MAX_CLIPS,
@@ -169,17 +170,35 @@ def is_taught(name: str) -> bool:
         return clean_name(name) in _read()
 
 
-def save_eval_clips(name: str, windows: list[np.ndarray]) -> None:
+def _sign_folder(base, name: str):
+    """<base>/<sign>, with the name made filesystem-safe."""
+    return base / (re.sub(r"[^a-z0-9]+", "_", clean_name(name)).strip("_") or "sign")
+
+
+def save_eval_clips(name: str, windows: list[np.ndarray], base=None) -> int:
     """Keep each recorded clip as backend/data/eval_clips/<sign>/clip_<time>_<n>.npy so
     accuracy can be tested later. Teaching the same sign again adds to the folder; only
     the newest FEWSHOT_EVAL_MAX_CLIPS are kept. The folder name is made filesystem-safe."""
-    folder = FEWSHOT_EVAL_DIR / (re.sub(r"[^a-z0-9]+", "_", clean_name(name)).strip("_") or "sign")
+    folder = _sign_folder(FEWSHOT_EVAL_DIR if base is None else base, name)
     folder.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
     for i, window in enumerate(windows, 1):
         np.save(folder / f"clip_{stamp}_{i}.npy", window.astype(np.float32))
     for old in sorted(folder.glob("clip_*.npy"))[:-FEWSHOT_EVAL_MAX_CLIPS]:
         old.unlink()
+    return len(list(folder.glob("clip_*.npy")))
+
+
+def save_test_clips(name: str, windows: list[np.ndarray]) -> int:
+    """Session-2 test clips: saved to eval_clips_session2/<sign>/ ONLY. No prototype is
+    written and eval_clips/ (session 1) is never touched. Returns clips now in that folder."""
+    return save_eval_clips(name, windows, base=FEWSHOT_EVAL2_DIR)
+
+
+def test_clip_counts() -> dict:
+    """{'session1': {sign: n}, 'session2': {sign: n}} - what is on disk, to guide recording."""
+    count = lambda base: {d.name: len(list(d.glob("clip_*.npy"))) for d in sorted(base.iterdir()) if d.is_dir()} if base.exists() else {}
+    return {"session1": count(FEWSHOT_EVAL_DIR), "session2": count(FEWSHOT_EVAL2_DIR)}
 
 
 def best_match(embedding: np.ndarray) -> tuple[str, float] | None:

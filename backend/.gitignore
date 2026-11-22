@@ -8,3 +8,4 @@ tests/*.log
 data/embedding_cache/
 data/prototypes.json
 data/eval_clips/
+data/eval_clips_session2/

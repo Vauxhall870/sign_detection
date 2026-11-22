@@ -135,6 +135,10 @@ or reuse the name of a taught sign (it would be replaced).
 45×543×3 landmark window), at most 8 per sign (oldest dropped first; `FEWSHOT_EVAL_MAX_CLIPS`),
 for measuring accuracy later. The folder is git-ignored.
 
+**Second session (cross-session test).** In the Teach tab tick *Record test clips only (session 2)*.
+Recording works as usual, but *Save test clips* writes the clips to `backend/data/eval_clips_session2/<sign>/`
+and teaches nothing: no prototype is changed and `eval_clips/` (session 1) is never touched.
+
 All the numbers are in `backend/config.py`: `FEWSHOT_THRESHOLD` (0.45), `BUILTIN_CONFIDENT`
 (0.5, now only the save-warning bar), `SMOOTH_WINDOWS` / `SMOOTH_MIN_WINS` (5 / 3), `FEWSHOT_MIN_CLIPS` / `MAX_CLIPS` (3 / 8).
 `GET /api/prototypes`, `DELETE /api/prototypes/{name}` and `POST /api/teach` (clips as JPEG

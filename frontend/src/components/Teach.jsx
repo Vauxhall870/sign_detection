@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { deletePrototype, getPrototypes } from '../api'
+import { deletePrototype, getPrototypes, getTestClips } from '../api'
 import { useRecognizerSocket } from '../useRecognizerSocket'
 
 const COUNTDOWN_SECONDS = 3
@@ -24,6 +24,9 @@ export default function Teach({ health }) {
   const [clash, setClash] = useState(null)          // built-in sign the new one resembles
   const [taught, setTaught] = useState({ signs: [], threshold: null })
   const [live, setLive] = useState(null)            // best taught match for the current window
+  // "Test clips" mode: record clips of a sign for later accuracy tests (session 2) WITHOUT teaching it
+  const [testMode, setTestMode] = useState(false)
+  const [testCounts, setTestCounts] = useState({ session1: {}, session2: {} })
 
   const phaseRef = useRef(phase)                    // so the socket callback sees the latest phase
   phaseRef.current = phase
@@ -31,7 +34,8 @@ export default function Teach({ health }) {
 
   const clearTimers = () => { timers.current.forEach((t) => { clearInterval(t); clearTimeout(t) }); timers.current = [] }
   const refreshTaught = () => getPrototypes().then(setTaught).catch(() => {})
-  useEffect(() => { refreshTaught(); return clearTimers }, [])
+  const refreshTestCounts = () => getTestClips().then(setTestCounts).catch(() => {})
+  useEffect(() => { refreshTaught(); refreshTestCounts(); return clearTimers }, [])
 
   const { videoRef, canvasRef, streaming, status, start, stop, send } = useRecognizerSocket((msg) => {
     // The Teach tab only needs taught-sign matching, so it runs the backend in "isl" mode
@@ -53,6 +57,12 @@ export default function Teach({ health }) {
       setMessage({ kind: 'error', text: msg.reason })
     }
     if (msg.type === 'save_error') setMessage({ kind: 'error', text: msg.message })
+    if (msg.type === 'saved_test') {
+      setName('')
+      setClipCount(0)
+      setMessage({ kind: 'ok', text: `Saved ${msg.clips} test clips for "${msg.name}" (session 2 now has ${msg.total}). No sign was taught.` })
+      refreshTestCounts()
+    }
     if (msg.type === 'clash') setClash(msg)        // ask the user before saving
     if (msg.type === 'saved') {
       setClash(null)
@@ -93,11 +103,12 @@ export default function Teach({ health }) {
     setMessage(null)                                 // drop stale messages such as "Clip 3 recorded."
     send({ action: 'save', name, confirm })
   }
+  const saveTest = () => { setMessage(null); send({ action: 'save_test', name }) }
   const removeClip = (index) => send({ action: 'delete_clip', index })
   const removeSign = (signName) => deletePrototype(signName).then(refreshTaught)
 
   const canRecord = streaming && phase === 'idle' && clipCount < MAX_CLIPS
-  const canSave = streaming && phase === 'idle' && name.trim() && clipCount >= MIN_CLIPS && clipCount <= MAX_CLIPS
+  const canSave = streaming && phase === 'idle' && name.trim() && clipCount >= (testMode ? 1 : MIN_CLIPS) && clipCount <= MAX_CLIPS
   const needsIslr = health && health.model !== 'islr'
 
   return (
@@ -123,6 +134,11 @@ export default function Teach({ health }) {
         <span className="status">{status}</span>
       </div>
 
+      <label className="test-toggle">
+        <input type="checkbox" checked={testMode} onChange={(e) => { setTestMode(e.target.checked); setClash(null); setMessage(null) }} />
+        {' '}Record test clips only (session 2): saves clips for accuracy tests and does <strong>not</strong> teach or change any sign
+      </label>
+
       <h3 className="section">1. Name the sign</h3>
       <div className="composer">
         <input
@@ -131,13 +147,18 @@ export default function Teach({ health }) {
           placeholder="Sign name, e.g. namaste"
           maxLength={40}
           aria-label="Sign name"
+          list="session1-signs"
         />
+        {/* suggest the exact session-1 sign names so the two sessions line up */}
+        <datalist id="session1-signs">
+          {Object.keys(testCounts.session1).map((n) => <option key={n} value={n} />)}
+        </datalist>
       </div>
 
       <h3 className="section">2. Record {MIN_CLIPS}-{MAX_CLIPS} clips</h3>
       <div className="controls">
         <button onClick={record} disabled={!canRecord}>Record clip</button>
-        <span className="counter">Clips recorded: {clipCount} / {MAX_CLIPS} (need {MIN_CLIPS}-{MAX_CLIPS})</span>
+        <span className="counter">Clips recorded: {clipCount} / {MAX_CLIPS} (need {testMode ? 1 : MIN_CLIPS}-{MAX_CLIPS})</span>
       </div>
       <div className="timeline">
         {Array.from({ length: clipCount }, (_, i) => (
@@ -147,10 +168,19 @@ export default function Teach({ health }) {
         ))}
       </div>
 
-      <h3 className="section">3. Save</h3>
+      <h3 className="section">3. {testMode ? 'Save test clips' : 'Save'}</h3>
       <div className="controls">
-        <button onClick={() => save(false)} disabled={!canSave}>Save sign</button>
+        {testMode ? (
+          <button onClick={saveTest} disabled={!canSave}>Save test clips</button>
+        ) : (
+          <button onClick={() => save(false)} disabled={!canSave}>Save sign</button>
+        )}
       </div>
+      {testMode && (
+        <p className="muted">
+          Session 2 clips so far: {Object.keys(testCounts.session1).map((n) => `${n} ${testCounts.session2[n] ?? 0}`).join(' · ') || 'none'}
+        </p>
+      )}
       {clash && (
         <div className="banner warn">
           {clash.clashes.map((c) => (

@@ -190,6 +190,31 @@ async function deleteSign(camera) {
   await browser.close()
 }
 
+async function testClipsMode(camera) {
+  console.log('\nTest-clips mode (session 2): saves clips, teaches nothing')
+  const session1 = () => readdirSync(join(tmp, 'eval', 'my_drink')).length
+  const before = session1()
+  const { browser, page, errors } = await openApp(camera)
+  await page.getByRole('button', { name: 'Teach', exact: true }).click()
+  await page.getByLabel('Record test clips only (session 2)', { exact: false }).check()
+  await page.getByRole('button', { name: 'Start camera' }).click()
+  await waitWatching(page)
+  await page.getByLabel('Sign name').fill('my drink')
+  await recordUntil(page, 2)
+  check('2 test clips recorded', (await counter(page)) === 2, await text(page, '.counter'))
+  await page.getByRole('button', { name: 'Save test clips' }).click()
+  const ok = await page.waitForFunction(() => /test clips/.test(document.querySelector('.banner.ok')?.textContent ?? ''), null, { timeout: 10000 })
+    .then(() => true, () => false)
+  check('save confirms and says nothing was taught', ok && /No sign was taught/.test(await text(page, '.banner.ok')), await text(page, '.banner.ok').catch(() => ''))
+  const s2 = existsSync(join(tmp, 'eval2', 'my_drink')) ? readdirSync(join(tmp, 'eval2', 'my_drink')) : []
+  check('clips are in eval_clips_session2/<sign>/', s2.length === 2 && s2.every((f) => f.endsWith('.npy')), s2.join(', '))
+  check('session 1 clips untouched', session1() === before, `${before} -> ${session1()}`)
+  check('no sign was taught', (await (await fetch(`${API}/api/prototypes`)).json()).signs.length === 0)
+  check('no clash warning in test mode', (await page.locator('.banner.warn').count()) === 0)
+  check('no console errors', errors.length === 0, errors.join(' | '))
+  await browser.close()
+}
+
 // ------------------------------------------------------------------ main
 
 const tmp = mkdtempSync(join(tmpdir(), 'signlang-teach-'))
@@ -197,7 +222,7 @@ const camera = join(tmp, 'camera.y4m')
 try {
   execFileSync(PYTHON, ['-m', 'tests.fake_camera', 'data/raw/drink/17709.mp4', camera, '4'], { cwd: BACKEND })
   start(PYTHON, ['-m', 'uvicorn', 'app.main:app', '--port', '8000'], BACKEND,
-    { TF_CPP_MIN_LOG_LEVEL: '2', FEWSHOT_PROTOTYPES: join(tmp, 'prototypes.json'), FEWSHOT_EVAL_CLIPS: join(tmp, 'eval') })
+    { TF_CPP_MIN_LOG_LEVEL: '2', FEWSHOT_PROTOTYPES: join(tmp, 'prototypes.json'), FEWSHOT_EVAL_CLIPS: join(tmp, 'eval'), FEWSHOT_EVAL_CLIPS_SESSION2: join(tmp, 'eval2') })
   start(process.execPath, [VITE, '--port', '5173', '--strictPort'], FRONTEND)
   await waitFor(`${API}/api/health`)
   await waitFor(APP)
@@ -207,6 +232,7 @@ try {
   await teachFlow(camera)
   await modes(camera)
   await deleteSign(camera)
+  await testClipsMode(camera)
 } catch (e) {
   failures.push(`crashed: ${e.message}`)
   console.error(e)

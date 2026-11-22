@@ -16,6 +16,13 @@ export async function getPrototypes() {
   return res.json()
 }
 
+// Test clips on disk per sign: { session1: {sign: n}, session2: {sign: n} }
+export async function getTestClips() {
+  const res = await fetch(`${API_BASE}/api/test-clips`)
+  if (!res.ok) throw new Error('Could not load test clips')
+  return res.json()
+}
+
 export async function deletePrototype(name) {
   const res = await fetch(`${API_BASE}/api/prototypes/${encodeURIComponent(name)}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Could not delete sign')

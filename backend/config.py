@@ -57,6 +57,9 @@ FEWSHOT_MAX_CLIPS = 8
 # so accuracy can be measured later. At most EVAL_MAX_CLIPS per sign; the oldest go first.
 FEWSHOT_EVAL_DIR = Path(os.environ.get("FEWSHOT_EVAL_CLIPS", DATA_DIR / "eval_clips"))
 FEWSHOT_EVAL_MAX_CLIPS = 8
+# A SECOND recording session of the same signs, saved by the Teach tab's "test clips" mode.
+# These are never used for teaching (no prototype is written); they are for cross-session tests.
+FEWSHOT_EVAL2_DIR = Path(os.environ.get("FEWSHOT_EVAL_CLIPS_SESSION2", DATA_DIR / "eval_clips_session2"))
 FEWSHOT_WINDOW_FRAMES = round(ISLR_FPS * ISLR_WINDOW_SECONDS)   # 45: what the ISLR model is fed live
 
 for d in (SEQ_DIR, MODEL_DIR, SIGN_DIR):

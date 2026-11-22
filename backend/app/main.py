@@ -91,7 +91,7 @@ MIN_HAND_FRACTION = 0.3      # a clip where hands are rarely seen can't teach a 
 
 
 # non-frame messages the WebSocket understands (besides "reset"); see handle_command
-COMMANDS = {"mode", "capture", "delete_clip", "clear_clips", "save"}
+COMMANDS = {"mode", "capture", "delete_clip", "clear_clips", "save", "save_test"}
 
 
 class TeachRequest(BaseModel):
@@ -140,6 +140,12 @@ def teach(req: TeachRequest):
 def prototypes():
     """Signs taught so far, and the similarity needed to match them."""
     return {"signs": fewshot.list_signs(), "threshold": FEWSHOT_THRESHOLD}
+
+
+@app.get("/api/test-clips")
+def test_clips():
+    """Clips on disk per sign for session 1 (eval_clips) and session 2 (eval_clips_session2)."""
+    return fewshot.test_clip_counts()
 
 
 @app.delete("/api/prototypes/{name}")
@@ -270,6 +276,17 @@ async def recognize(ws: WebSocket):
         if action == "clear_clips":
             clips.clear()
             return {"type": "clips", "count": 0}
+
+        if action == "save_test":        # Teach tab "test clips" mode: keep clips, teach nothing
+            if not 1 <= len(clips) <= FEWSHOT_MAX_CLIPS:
+                return {"type": "save_error", "message": f"Record 1-{FEWSHOT_MAX_CLIPS} clips first (have {len(clips)})."}
+            try:
+                total = fewshot.save_test_clips(str(cmd.get("name", "")), list(clips))
+            except ValueError as e:
+                return {"type": "save_error", "message": str(e)}
+            saved = len(clips)
+            clips.clear()
+            return {"type": "saved_test", "name": fewshot.clean_name(str(cmd["name"])), "clips": saved, "total": total}
 
         if action == "save":
             if not FEWSHOT_MIN_CLIPS <= len(clips) <= FEWSHOT_MAX_CLIPS:
